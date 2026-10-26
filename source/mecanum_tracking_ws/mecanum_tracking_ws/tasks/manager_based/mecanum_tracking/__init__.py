@@ -16,8 +16,8 @@ _TASKS = {
     "Mecanum-Tracking-Torque-v0": ("MecanumTrackingTorqueEnvCfg", "PPORunnerTrackingTorqueCfg"),
     "Mecanum-Tracking-Torque-Play-v0": ("MecanumTrackingTorqueEnvCfg_PLAY", "PPORunnerTrackingTorqueCfg"),
     "Mecanum-Tracking-Torque-Eval-v0": ("MecanumTrackingTorqueEnvCfg_EVAL", "PPORunnerTrackingTorqueCfg"),
-    # the same, trained from random initial errors (position and / or heading), no deviation termination
-    "Mecanum-Tracking-Torque-Offset-v0": ("MecanumTrackingTorqueOffsetEnvCfg", "PPORunnerTrackingTorqueCfg"),
+    # the ID torque_offset_seed0 was trained under; since 2026-10-26 the same config as Mecanum-Tracking-Torque-v0
+    "Mecanum-Tracking-Torque-Offset-v0": ("MecanumTrackingTorqueEnvCfg", "PPORunnerTrackingTorqueCfg"),
     # its action-space ablation: twist + IK -> wheel speed setpoints (velocity loop), otherwise the same task
     "Mecanum-Tracking-Own-v0": ("MecanumTrackingOwnEnvCfg", "PPORunnerTrackingOwnCfg"),
     "Mecanum-Tracking-Own-Play-v0": ("MecanumTrackingOwnEnvCfg_PLAY", "PPORunnerTrackingOwnCfg"),

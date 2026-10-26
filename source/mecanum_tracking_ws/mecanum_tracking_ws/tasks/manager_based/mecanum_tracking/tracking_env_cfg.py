@@ -8,7 +8,8 @@ Every choice is explained in docs/MAGYARAZAT.md (section numbers in the comments
 The comparison with the LTV-MPC (docs/OSSZEHANGOLAS.md, since 2026-10-23) is the ``Mecanum-Tracking-Torque-*`` task family
 (:class:`MecanumTrackingTorqueEnvCfg`): our own robot with the weighed masses and XM430 torque motors, the policy
 commands the four wheel torques at 20 Hz, observes the MPC's state and reference horizon (N = 10, T = 0.05 s), tracks
-the heading too, and follows the MPC side's references (0.1 m/s). The FUJI tasks keep their original settings
+the heading too, and follows the MPC side's references (0.1 m/s); the training starts from random initial errors
+(up to 0.4 m / 45 deg, no deviation termination; since 2026-10-26). The FUJI tasks keep their original settings
 (51 Hz, K = 20, heading-free) so that their runs stay reproducible.
 """
 
@@ -65,12 +66,12 @@ torque is clipped to +-u_max = +-1.95 Nm, the same box as the MPC's. The referen
 traction limit is ~0.14 Nm per wheel (mu 0.9, 2.134 kg), so a unit of 1.95 Nm would make the initial exploration
 noise (std 0.5 units) spin every wheel."""
 
-OFFSET_START_PROB = (0.5, 0.5)
-"""Offset training task: probability of a random position / heading offset at a reset, independent of each other: a
-quarter of the starts on the reference, a quarter off it, a quarter turned, a quarter both."""
-OFFSET_START_MAX = (0.4, math.pi / 4)
-"""Offset training task: largest random start offset, 0.4 m and 45 deg (covers the evaluation scenario 2, 30 cm /
-30 deg)."""
+COMPARE_START_OFFSET_PROB = (0.5, 0.5)
+"""Comparison tasks (training): probability of a random position / heading offset at a reset, independent of each
+other: a quarter of the starts on the reference, a quarter off it, a quarter turned, a quarter both."""
+COMPARE_START_OFFSET_MAX = (0.4, math.pi / 4)
+"""Comparison tasks (training): largest random start offset, 0.4 m and 45 deg (covers the evaluation scenario 2,
+30 cm / 30 deg)."""
 
 EPISODE_LENGTH_S = 20.0
 """Training episode [s]; a truncation (time_out=True), tracking has no natural end (MAGYARAZAT 5.2)."""
@@ -185,6 +186,28 @@ class CommandsCfg:
 
 
 @configclass
+class CompareCommandsCfg:
+    """Comparison tasks: the MPC's horizon as look-ahead (N = 10, T = 0.05 s), and training from random initial errors
+    (COMPARE_START_OFFSET_*; the PLAY / EVAL variants switch them off, eval_tracking.py --start_offset sets a fixed one).
+    The references (refs/train_own) are filled in by apply_comparison."""
+
+    ref_traj = mdp.TrajectoryCommandCfg(
+        asset_name="robot",
+        traj_files=[],  # filled in apply_comparison (needs the generated files)
+        preview_steps=COMPARE_N,
+        preview_dt=COMPARE_T,
+        loop=True,
+        random_start=True,
+        initial_time_scale=0.5,
+        velocity_in_traj_frame=False,
+        resampling_time_range=(1.0e9, 1.0e9),
+        start_offset_prob=COMPARE_START_OFFSET_PROB,
+        start_offset_max=COMPARE_START_OFFSET_MAX,
+        debug_vis=True,
+    )
+
+
+@configclass
 class ObservationsCfg:
     """MAGYARAZAT 5. NO remaining-time term: time-unlimited task (Pardo et al. 2018)."""
 
@@ -248,12 +271,22 @@ class CompareObservationsCfg:
 class CompareRewardsCfg:
     """Comparison tasks: the kernels scaled to the 0.1 m/s / millimetre task, plus heading tracking (the MPC tracks
     psi_r); the torque-rate penalty is the RL counterpart of the MPC's S, the wheel-speed penalty that of its soft
-    wheel-speed limit. ~3 per step at perfect tracking."""
+    wheel-speed limit. ~3.5 per step at perfect tracking.
+
+    Position and heading have a coarse and a fine kernel each: a Gaussian kernel is only steep within ~its std, and
+    both errors span a wide range (the training starts up to 0.4 m / 45 deg off, COMPARE_START_OFFSET_*). The coarse
+    one brings the robot back (std / largest offset ~1.6 for both), the fine one gives the precision."""
 
     track_pos_coarse = RewTerm(func=mdp.track_pos_exp, weight=1.0, params={"command_name": "ref_traj", "std": 0.25})
     track_pos_fine = RewTerm(func=mdp.track_pos_exp, weight=1.0, params={"command_name": "ref_traj", "std": 0.05})
     track_vel = RewTerm(func=mdp.track_vel_exp, weight=0.5, params={"command_name": "ref_traj", "std": 0.1})
-    track_heading = RewTerm(func=mdp.track_heading_exp, weight=0.5, params={"command_name": "ref_traj", "std": 0.2})
+    track_heading_coarse = RewTerm(
+        func=mdp.track_heading_exp, weight=0.5, params={"command_name": "ref_traj", "std": 0.5}
+    )
+    track_heading_fine = RewTerm(
+        func=mdp.track_heading_exp, weight=0.5, params={"command_name": "ref_traj", "std": 0.2}
+    )
+    """Until 2026-10-26 named track_heading (runs before torque_offset_seed0 log it under that name)."""
     torque_rate = RewTerm(func=mdp.torque_rate_l2, weight=-20.0, params={"action_name": "wheel_torque"})
     """-20: with -1 the first policies chattered (torque RMS 5x the MPC's, du up to 0.15 Nm per step; 2026-10-23)."""
     wheel_speed = RewTerm(
@@ -289,6 +322,15 @@ class TerminationsCfg:
 
     time_out = DoneTerm(func=mdp.time_out, time_out=True)
     deviation = DoneTerm(func=mdp.tracking_deviation, params={"command_name": "ref_traj", "max_error": 1.0})
+
+
+@configclass
+class CompareTerminationsCfg:
+    """Comparison tasks (training): only the time limit. The robot also starts off the reference
+    (COMPARE_START_OFFSET_*) and has to come back from wherever it gets to, so losing the trajectory does not end the
+    episode (the speed curriculum then only moves up). The PLAY / EVAL variants keep TerminationsCfg: > 1 m = lost."""
+
+    time_out = DoneTerm(func=mdp.time_out, time_out=True)
 
 
 @configclass
@@ -385,15 +427,12 @@ def apply_robot(cfg: "MecanumTrackingEnvCfg", name: str) -> None:
 
 def apply_comparison(cfg: "MecanumTrackingEnvCfg") -> None:
     """The settings shared with the LTV-MPC (docs/OSSZEHANGOLAS.md): our own robot (weighed masses, XM430), 20 Hz
-    control, the MPC's horizon as look-ahead, the training references at the MPC's speed (0.1 m/s), a curriculum that
-    keeps them feasible."""
+    control, the training references at the MPC's speed (0.1 m/s), a curriculum that keeps them feasible (the
+    look-ahead and the initial errors are in CompareCommandsCfg)."""
     apply_robot(cfg, "own")
     cfg.decimation = COMPARE_DECIMATION
     cfg.sim.render_interval = cfg.decimation
-    cmd = cfg.commands.ref_traj
-    cmd.preview_steps = COMPARE_N
-    cmd.preview_dt = COMPARE_T
-    cmd.traj_files = _refs("train_own")
+    cfg.commands.ref_traj.traj_files = _refs("train_own")
     if cfg.curriculum.speed is not None:
         cfg.curriculum.speed.params["scale_range"] = (0.5, COMPARE_CURRICULUM_TOP)
         cfg.curriculum.speed.params["up_error"] = 0.05
@@ -407,6 +446,7 @@ def to_play(cfg: "MecanumTrackingEnvCfg") -> None:
     cfg.events.base_mass = None
     cfg.curriculum.speed = None
     cfg.commands.ref_traj.initial_time_scale = 1.0
+    cfg.commands.ref_traj.start_offset_prob = (0.0, 0.0)  # no random initial error (a fixed one: start_offset)
 
 
 def to_eval(cfg: "MecanumTrackingEnvCfg", refs: str) -> None:
@@ -488,11 +528,15 @@ class MecanumTrackingEnvCfg_EVAL(MecanumTrackingEnvCfg_PLAY):
 @configclass
 class MecanumTrackingTorqueEnvCfg(MecanumTrackingEnvCfg):
     """THE comparison task (docs/OSSZEHANGOLAS.md): the policy outputs the four wheel torques at 20 Hz, the same
-    plant, references, horizon and limits as the LTV-MPC."""
+    plant, references, horizon and limits as the LTV-MPC. Trained from random initial errors (CompareCommandsCfg,
+    since 2026-10-26; the runs before torque_offset_seed0 started on the reference and ended at 1 m deviation, see
+    their params/env.yaml)."""
 
     actions: TorqueActionsCfg = TorqueActionsCfg()
+    commands: CompareCommandsCfg = CompareCommandsCfg()
     observations: CompareObservationsCfg = CompareObservationsCfg()
     rewards: CompareRewardsCfg = CompareRewardsCfg()
+    terminations: CompareTerminationsCfg = CompareTerminationsCfg()
 
     def __post_init__(self) -> None:
         super().__post_init__()
@@ -501,6 +545,11 @@ class MecanumTrackingTorqueEnvCfg(MecanumTrackingEnvCfg):
 
 @configclass
 class MecanumTrackingTorqueEnvCfg_PLAY(MecanumTrackingTorqueEnvCfg):
+    """Watching / evaluation: no random initial error, and losing the trajectory (> 1 m) ends the run (eval_tracking.py
+    and play_shapes.py report it as lost)."""
+
+    terminations: TerminationsCfg = TerminationsCfg()
+
     def __post_init__(self) -> None:
         super().__post_init__()
         to_play(self)
@@ -515,24 +564,6 @@ class MecanumTrackingTorqueEnvCfg_EVAL(MecanumTrackingTorqueEnvCfg_PLAY):
         super().__post_init__()
         to_eval(self, "test_fixed")
         self.commands.ref_traj.loop = False
-
-
-@configclass
-class MecanumTrackingTorqueOffsetEnvCfg(MecanumTrackingTorqueEnvCfg):
-    """The comparison task trained from random initial errors: the robot starts on the reference, off it (up to 0.4 m),
-    turned (up to 45 deg) or both (OFFSET_START_*), and no episode is ended for losing the trajectory (no deviation
-    termination, only the time-out). Same observations and actions, so it is evaluated with
-    Mecanum-Tracking-Torque-Eval-v0. track_heading (std 0.2 rad) is flat beyond ~25 deg, so a coarse heading kernel
-    gives the signal to turn back, as track_pos_coarse does for the position (std / largest offset ~1.6 for both)."""
-
-    def __post_init__(self) -> None:
-        super().__post_init__()
-        self.commands.ref_traj.start_offset_prob = OFFSET_START_PROB
-        self.commands.ref_traj.start_offset_max = OFFSET_START_MAX
-        self.terminations.deviation = None
-        self.rewards.track_heading_coarse = RewTerm(
-            func=mdp.track_heading_exp, weight=0.5, params={"command_name": "ref_traj", "std": 0.5}
-        )
 
 
 @configclass
@@ -553,6 +584,8 @@ class MecanumTrackingOwnEnvCfg(MecanumTrackingTorqueEnvCfg):
 
 @configclass
 class MecanumTrackingOwnEnvCfg_PLAY(MecanumTrackingOwnEnvCfg):
+    terminations: TerminationsCfg = TerminationsCfg()  # as MecanumTrackingTorqueEnvCfg_PLAY
+
     def __post_init__(self) -> None:
         super().__post_init__()
         to_play(self)
