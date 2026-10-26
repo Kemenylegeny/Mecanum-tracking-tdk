@@ -1,0 +1,22 @@
+# training / evaluation outputs: large and regenerable (checkpoints, videos, eval logs; the runs are on W&B).
+# Kept: the run scripts (logs/runs/*.sh) and the result tables (logs/eval/*.md), which document the experiments.
+logs/*
+!logs/runs/
+logs/runs/*
+!logs/runs/*.sh
+!logs/eval/
+logs/eval/*
+!logs/eval/*.md
+wandb/
+outputs/
+
+# generated reference sets too large for git (train_own alone is 374 MB): regenerate them bit for bit with the
+# commands of refs/GENERATED.md and check them against refs/generated.sha256
+source/mecanum_tracking_ws/mecanum_tracking_ws/tasks/manager_based/mecanum_tracking/refs/train/
+source/mecanum_tracking_ws/mecanum_tracking_ws/tasks/manager_based/mecanum_tracking/refs/train_own/
+source/mecanum_tracking_ws/mecanum_tracking_ws/tasks/manager_based/mecanum_tracking/refs/test_unseen/
+source/mecanum_tracking_ws/mecanum_tracking_ws/tasks/manager_based/mecanum_tracking/refs/test_unseen_own/
+
+__pycache__/
+*.py[cod]
+*.egg-info/

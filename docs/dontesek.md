@@ -1,0 +1,60 @@
+# Döntésnapló és forrásai (TDK „Megvalósítás” fejezethez)
+
+Jelölés: [ellenőrizve] = a forrást megnyitottuk, és a tartalom stimmel. [részben] = a forrás megvan, de csak egy részét igazolja az állításnak. [nincs ellenőrizve] = csak keresési találat. [nincs forrás] = saját kísérlettel kell indokolni.
+Utolsó frissítés: 2026-10-23 (az MPC-vel való összehangolás döntései a tábla végén; részletek: `OSSZEHANGOLAS.md`).
+
+## Elméleti állítások → forrás
+
+| # | Állítás | Forrás | Hol | Státusz |
+|---|---|---|---|---|
+| 1 | PPO (clipped surrogate) | Schulman et al., „Proximal Policy Optimization Algorithms”, arXiv:1707.06347, 2017 | clipped objektív (Eq. 7, egyenletszám nincs ellenőrizve) | [ellenőrizve] |
+| 1 | Előnybecslés (GAE) | Schulman et al., „High-Dimensional Continuous Control Using GAE”, ICLR 2016, arXiv:1506.02438 | GAE(γ,λ) definíció | [ellenőrizve] |
+| 2 | Masszívan párhuzamos GPU-s RL + curriculum | Rudin, Hoeller, Reist, Hutter, „Learning to Walk in Minutes Using Massively Parallel Deep RL”, CoRL 2021, PMLR 164, arXiv:2109.11978 | 3.1 fejezet (terep-curriculum) | [ellenőrizve] |
+| 3 | exp-kernel követési jutalom | Rudin et al. 2021 (fent) | A.3 függelék, 2. táblázat: $\exp(-\lVert e\rVert^2/0.25)$, súly 1·dt (a súlyt a dt-vel is szorozzák!) | [ellenőrizve] |
+| 3 | exp-kernel követés (póz) | Peng, Abbeel, Levine, van de Panne, „DeepMimic”, ACM TOG 2018, arXiv:1804.02717 | 5.3 fejezet: több exp-tag súlyozva (0.65/0.1/0.15/0.1) | [ellenőrizve] |
+| 4 | Korai termináció működése | DeepMimic | 6.2 fejezet + 10.4 abláció | [ellenőrizve] |
+| 4 | Negatív jutalom + korai termináció → az ágens a leállást keresi | DERAIL, arXiv:2012.01365 (EarlyTerm−/+ feladatok) | — | [nincs ellenőrizve] → ellenőrizni, vagy saját ablációval megmutatni |
+| 5 | Isaac Lab | Mittal et al., „Isaac Lab: A GPU-Accelerated Simulation Framework for Multi-Modal Robot Learning”, arXiv:2511.04831, 2025 | — | [ellenőrizve] (bibliográfiai adat) |
+| 5 | Elődje (Orbit) | Mittal et al., „Orbit…”, IEEE RA-L 2023, arXiv:2301.04195 | — | [ellenőrizve] (bibliográfiai adat) |
+| 6 | Domain randomization | Tobin et al., IROS 2017, arXiv:1703.06907 | — | [ellenőrizve] |
+| 6 | Dinamika-randomizáció | Peng, Andrychowicz, Zaremba, Abbeel, ICRA 2018, arXiv:1710.06537 | — | [ellenőrizve] |
+| 7 | Test-koordinátás előretekintő referenciapontok | jelölt: Song et al. 2023; Kaufmann et al. 2023 | — | [nincs ellenőrizve] → célzott keresés kell |
+| 8 | RL vs. optimális szabályozás: az RL jobb célfüggvényt optimalizál, a terv–szabályozás szétbontás korlátoz | Song, Romero, Müller, Koltun, Scaramuzza, Science Robotics 8(82), 2023, doi:10.1126/scirobotics.adg1462 | abstract | [ellenőrizve] |
+| 9 | Akció-simaság regularizálása | Mysore et al., „CAPS”, ICRA 2021, arXiv:2012.06644 | abstract | [ellenőrizve] |
+
+## Döntések (amit a projektben választottunk)
+
+| Döntés | Indoklás | Forrás / bizonyíték |
+|---|---|---|
+| Akciótér: **NYITOTT** (2026-10-15 óta). Opciók: (1) kerék-nyomaték (effort action, az actuator stiffness/damping=0) = azonos az MPC-vel; (2) twist + IK, az interfész-eltérés kimondásával | Az MPC DINAMIKUS: a bemenete 4 kerék-nyomaték. A twist + IK-val az RL egy beépített sebesség-PD hurkot kapna, ami az MPC-nek nincs. (A korábbi „twist = azonos interfész” érv csak kinematikus MPC-re volt igaz.) | Kísérlettervezési érv; a nulltér-érv mindkét esetben áll |
+| Jutalom: exp-kernel a $-e^2$ helyett | Korlátos és pozitív → nem ösztönöz korai leállásra; $\sigma$ = érzékenység | #3, #4 (+ saját abláció ajánlott) |
+| Teszthalmaz: közös, kihagyott pályák, azonos seed | Szivárgás és zaj kizárása | Song et al. 2023 módszertana (#8) |
+| Előretekintés: $K\Delta t \approx NT$; a referencia-állapot (pozíció + sebesség) és lehetőleg a $\tau_{ref}$ is a megfigyelésben | Azonos előrecsatolási információ mindkét vezérlőnek | #7 (nyitott) + kísérlettervezési érv |
+| Referencia tárolása: táblázat `(N_pálya, T_minta, oszlopok)` GPU-n, lineáris interpoláció (θ wrap), a vége clamp/modulo | Ugyanaz a fájl, mint az MPC-nél → azonos referencia; bármilyen alakzat; egyszerű vektorizálás | Kísérlettervezési érv |
+| Preview: $\Delta t = T$, $K = N$ | Pontosan ugyanazok az előre látott időpontok, mint az MPC-nél | Kísérlettervezési érv |
+| Sebesség-referencia a megfigyelésben ÉS külön sebességkövetési jutalomtag (javaslat) | Csillapítás (D-tag), azonnali tanuló jel, $\tau_{ref}$/LTV-hez szükséges | DeepMimic 5.3 (sebesség-exp-tag a póztag mellett) [ellenőrizve]; abláció ajánlott: sebességtaggal vs. nélküle |
+| Megfigyelés: test-koordinátás preview-hibák, $(\sin\Delta\theta, \cos\Delta\theta)$, $v_{ref}$ a robot keretében, saját sebesség + keréksebesség, utolsó akció | invariancia; nincs szakadás $\pm\pi$-nél; ugyanaz az információ, mint az MPC-nél | Zhou et al. 2019 CVPR 3. fejezet [ellenőrizve]; Kaufmann et al. 2023 Nature [részben] |
+| NINCS idő a megfigyelésben; `time_out=True` (bootstrap) | időkorlát nélküli feladat (döntő teszt) | Pardo et al. 2018 ICML 2–3. fejezet [ellenőrizve]; RSL-RL ppo.py [ellenőrizve] |
+| Megfigyelés-normalizálás be (már a configban) | PPO-nál kritikus | Andrychowicz et al. 2021 ICLR 3.3 [ellenőrizve] |
+| Zaj: tanításnál be, a fő kiértékelésnél ki; robusztussági teszt: azonos zaj mindkettőnek | alapelv: azonos állapot-minőség | kísérlettervezési érv |
+| Fizikai korlátok: azonos nyomaték- ÉS keréksebesség-korlát mindkét vezérlőnek | alapelv | kísérlettervezési érv |
+| Tervezés ≠ kiértékelés: az RL zajjal/DR-rel tanulhat, az MPC-t zajmentesen hangolhatják; csak a kiértékelés azonos. Abláció: RL zaj nélkül tanítva | a tervezés a vezérlő része | kísérlettervezési érv; DR: Tobin 2017, Peng 2018 [ellenőrizve] |
+| Orientáció: SZABAD (nincs θ_ref) mindkét vezérlőnél; referencia = X, Y + deriváltjaik | a holonom robot maga optimalizálja; azonos feladat (alapelv); az RL kihasználhatja az irányfüggő csúszást | Kim et al. 2020 JKSPE [abstract]; Song 2023 [ellenőrizve] |
+| MPC-oldal (a társnak): szabad θ mellett a linearizálás az előző megoldás eltolt jósolt trajektóriája körül (RTI); ω büntetése az R-ben | a referencia körüli linearizálás rossz, ha a θ elvándorol | Gros et al. 2020 IJC 3.2 + 4.3, Alg. 2–3 [ellenőrizve, szöveg]; Diehl et al. 2005 [bibliográfiai adat] |
+| Jutalom: 2 pozíciós exp-kernel (σ 0.5 / 0.1 m), sebesség-kernel (σ 0.3 m/s), akció-simaság, ω²; NINCS szöghiba-tag; a teljes r > 0 tipikusan | az exp-kernel csak pozitív teljes jutalomnál véd az öngyilkosság ellen | Rudin 2021 T2; DeepMimic 5.3; CAPS [ellenőrizve] |
+| Eltérés-termináció 1 m (= 2σ1), time_out=False | valódi kudarc; a küszöb ≫ kezdeti hiba, különben nincs tapasztalat | tervezési érv |
+| Tanító pályák: véletlen Fourier-görbék (nem a tesztalakzatok), v ≤ sqrt(a_lat/κ), a_tan-korlát, min. sugár 0,2 m | szivárgás kizárása + általánosítás; követhetetlen referenciából nem lehet tanulni | Modern Robotics 9.4; Bobrow 1985 [bibliográfiai adat]; Kiemel & Kröger 2022 [abstract] |
+| Sebesség-curriculum: időskála s ∈ [0,5; 2], env-enként fel (nem veszett el ÉS hiba < 0,1 m) / le (eltérés) | a_lat ~ s² → hatékony nehézség-gomb | Bengio 2009 [bibliográfiai adat]; Rudin 2021 3.1 [ellenőrizve] |
+| DR: súrlódás 0,5–1,1, tömeg ×0,8–1,2 (csak a tanításnál); a kiértékelés rögzített, mindkettőnek azonos + robusztusság a tartományon kívül | tervezés ≠ kiértékelés | Tobin 2017, Peng 2018 [ellenőrizve] |
+| Két teszthalmaz: (a) standard alakzatok (az MPC hangolása ezeken → kimondani), (b) egyik vezérlő által sem látott véletlen görbék (más seed). Ha lehet, az MPC-t is a tanító görbéken hangolják | amin hangoltál/tanítottál, azon a mért eredmény túlbecsül; az RL nagy kapacitása miatt magolhat, az MPC kevésbé (kis paraméterszám) — az elv ugyanaz | kísérlettervezési érv |
+| **2026-10-23 — összehangolás az LTV-MPC-vel** (a társ repója: Pvaradi05/Mecanum-Robot-MPC-TDK @ fe01f88) | | |
+| Akciótér: **4 kerék-nyomaték** (a 2026-10-15-i NYITOTT döntés lezárva). A policy kimenete × 0.25 Nm, vágva ±1.95 Nm-re (= az MPC nyomatékdoboza); a twist + IK változat (`-Own-` taskok) abláció | azonos interfész: az MPC is 4 nyomatékot ad ki; a 0.25 Nm/egység csak a policy kimenetének paraméterezése (a τ_r ≤ 0.01 Nm, a tapadási határ ~0.14 Nm/kerék) | kísérlettervezési érv |
+| **Heading: KÖVETETT** (visszavonja a 4. node „szabad orientáció” döntését) | az MPC heading-követő ($Q_\psi$ = 3283, ψ_r körül linearizál); azonos feladat kell. Az RL-be egy jutalomtag (`track_heading`) + sin/cos(Δψ) a megfigyelésben; fordítva (heading-szabad MPC) RTI-átírás kellene | alapelv; a társ kódja (`lmpc.py`, `reference.py`) |
+| Növény: saját robot, **mért tömegek** (a társ URDF-je, 2.134 kg), **XM430-W210-T** nyomatékmódban (1.95 Nm, 8.06 rad/s, lineáris nyomaték–fordulat görbe a 3.0 Nm-es álló nyomatékból), armature 0 | ugyanaz a modell (MPC) és növény (Isaac) URDF-ből; a motor a társ `motor.py`-ja | ROBOTIS e-manual (a társ forrása); Isaac Lab `DCMotor` [ellenőrizve a telepített forrásban] |
+| 20 Hz (decimation 18), előretekintés $K = N = 10$, $T = 0.05$ s | az MPC D4 döntése (N = 10 2026-10-21 óta) | a társ README-je |
+| Megfigyelés = az MPC `step(x, x_r, u_r, u_applied)` bemenete a robot keretében: x_r,0..N relatívan, a robot síkbeli sebessége, u_applied; **u_r nélkül** (abláció: `n_extra=4`) | azonos információ (az u_r kivételével, ami abláció), SE(2)-invariáns alak; a keréksebesség kikerült, mert az MPC állapotában nincs | kísérlettervezési érv |
+| Referencia: a társ `reference.py`-jának pályái exportálva (kör, ellipszis, nyolcas, lekerekített négyzet; koszinuszos rámpa; fixed ÉS tangent heading; 0.1 m/s); az éles négyzet kiesik | azonos referencia; 0.15 m/s tangenssel, 0.2 m/s semmivel nem megvalósítható (keréksebesség) | `Reference.check_limits` [lemérve] |
+| Tanító pályák: véletlen görbék 0.1 m/s-mal, keréksebesség-korláttal (ω ≤ 8.06/1.2), fele fixed, fele tangent heading; curriculum s ∈ [0.5; 1.2] | a curriculum tetején is megvalósítható; mindkét heading-módot megtanulja (a fő mód még nyitott a társsal) | kísérlettervezési érv |
+| MPC: a társ `LinearMPCv2`-je + **DARE-végköltség** + **S = 100·I** nyomatékváltozás-büntetés | DARE: a végköltség a horizonton túli optimális költség; S: simaság (az RL torque_rate párja). S hatása kicsi (offline söprés: 0 → 2000 mellett perturbált növényen 2.6 → 3.5 mm) | Riccati-iteráció [lemérve: 52 iteráció]; offline söprés |
+| Motormodell: saját `XM430Motor` (`robots/actuators.py`) az Isaac `DCMotor` helyett: a nyomaték–fordulat görbe csak **korlátozza** a parancsot (|τ| ≤ 3.0 (1 − |ω|/8.06) a mozgás irányába, ≤ 1.95), sosem fordítja meg; a reset-magasság 5 → 1 mm | a `DCMotor` 8.06 rad/s fölött a parancstól függetlenül 1.95 Nm-rel fékez, és a görbe meredeksége (0.37 Nm·s/rad) a könnyű kerékkel (J1 = 1.85e-5, armature 0) ~56× az explicit stabilitási határ fölött van: ±160 rad/s-os oszcilláció (a 30 cm-es kezdeti hibánál az MPC mind a 4 pályát elvesztette, a javítás után egyet sem) | a telepített `actuator_pd.py` [ellenőrizve]; Isaac-futás [lemérve] |
+| Az MPC modellje **súrlódásmentes** marad (nincs zavarbecslő) | az Isaac-növényben a görgő–talaj kontaktus ~0.002 Nm/kerék gördülési veszteséget ad (> τ_r!); „MPC modellhibával vs. RL, ami megtanulja” a kísérlet tárgya | `scripts/torque_check.py` [lemérve] |
