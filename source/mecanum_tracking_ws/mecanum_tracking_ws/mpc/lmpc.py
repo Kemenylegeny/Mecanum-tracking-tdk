@@ -1,5 +1,5 @@
 """Copied from Pvaradi05/Mecanum-Robot-MPC-TDK @ fe01f88, mecanum_lmpc_v2/lmpc.py (only the imports changed), with
-three additions of the RL comparison (docs/OSSZEHANGOLAS.md, 2.2), all off by default, so the defaults reproduce the
+four additions of the RL comparison (docs/OSSZEHANGOLAS.md, 2.2), all off by default, so the defaults reproduce the
 original controller exactly (tests/test_mpc.py):
     terminal='dare'   terminal weight P = solution of the DARE at the end of the horizon (A_N-1, B_N-1, Q, R)
                       instead of P_scale * Q; Riccati iteration, warm-started with the previous step's P
@@ -10,6 +10,10 @@ original controller exactly (tests/test_mpc.py):
                       heading), n = t rotated by +90 deg; qa weights the along-track error (lag), qc the cross-track
                       error. qa = qc = q gives q I, i.e. the plain Q. Isotropic (qa + qc) / 2 where the reference
                       stands still. The terminal block (P_scale M or the DARE with Q_N-1) uses M_N-1.
+    state='wheel'     the velocity states are three wheel speeds, z = [X, Y, psi, w1, w2, w3] (wheel_dynamics.py: the
+                      same Chaplygin model, its time derivative gives the wheel accelerations directly); x_meas, x_r
+                      in that state. Q keeps its meaning: the velocity weights on (X_dot, Y_dot, psi_dot) become
+                      J3^T diag(q) J3 on the wheel speeds; the wheel-speed limit rows are exact (linear in z).
 
 Linear time-varying MPC after Kuehne, Gomes da Silva Jr., Lages (2005), condensed QP form
 (eq. 15-20), on the RK4-discretised Chaplygin model (plan: "Linear MPC after Kuehne et al.",
@@ -38,7 +42,7 @@ import time
 
 import numpy as np
 import quadprog
-from . import dynamics, motor
+from . import dynamics, motor, wheel_dynamics
 from .conventions import STATUS_FALLBACK, STATUS_SOLVED, STATUS_STOPPED
 from .params import RobotParams
 from .wheel_speed import SLACK_LIN, SLACK_QUAD, wheel_speed_jacobian, wheel_speeds
@@ -70,15 +74,22 @@ class LinearMPCv2:
                  R=(400, 400, 400, 400), P_scale=5.0, u_max=motor.U_MAX, du_max=motor.DU_MAX,
                  max_failures=3, omega_max=motor.OMEGA_MAX, wheel_speed_limit=True,
                  slack_lin=SLACK_LIN, slack_quad=SLACK_QUAD, terminal='scaled', S=None,
-                 dare_iters=500, dare_tol=1e-9, Q_path=None):
+                 dare_iters=500, dare_tol=1e-9, Q_path=None, state='world'):
         if terminal not in ('scaled', 'dare'):
             raise ValueError("terminal must be 'scaled' (P_scale * Q) or 'dare'")
+        if state not in ('world', 'wheel'):
+            raise ValueError("state must be 'world' ([X, Y, psi, X_dot, Y_dot, psi_dot]) or 'wheel' ([X, Y, psi, w1-3])")
         self.p, self.T, self.N = p, T, N
+        self.state = state
+        self.model = dynamics if state == 'world' else wheel_dynamics
         self.terminal, self.dare_iters, self.dare_tol = terminal, dare_iters, dare_tol
         self.u_max, self.du_max, self.max_failures = u_max, du_max, max_failures
         self.omega_max, self.wheel_speed_limit = omega_max, wheel_speed_limit
         self.slack_lin, self.slack_quad = slack_lin, slack_quad
-        Q, R = np.diag(Q).astype(float), np.diag(R).astype(float)
+        q = np.asarray(Q, dtype=float)
+        Q, R = np.diag(q), np.diag(R).astype(float)
+        if state == 'wheel':
+            Q[3:, 3:] = wheel_dynamics.velocity_weight(q[3:], p)
         self.Q, self.R = Q, R
         self.P_scale = P_scale
         self.Q_path = None if Q_path is None else (float(Q_path[0]), float(Q_path[1]))
@@ -131,10 +142,10 @@ class LinearMPCv2:
         # linearise along the reference; free response e and prediction matrix Bbar
         A, B, c = [], [], []
         for j in range(N):
-            Ad, Bd = dynamics.rk4_jacobians(x_r[j], u_r[j], T, p)
+            Ad, Bd = self.model.rk4_jacobians(x_r[j], u_r[j], T, p)
             A.append(Ad)
             B.append(Bd)
-            c.append(dynamics.rk4_step(x_r[j], u_r[j], T, p) - x_r[j + 1])
+            c.append(self.model.rk4_step(x_r[j], u_r[j], T, p) - x_r[j + 1])
         e = np.zeros(NX * N)
         Bbar = np.zeros((NX * N, NU * N))
         e_prev = x_t0
@@ -153,7 +164,8 @@ class LinearMPCv2:
             Qbar = self.Qbar.copy()
             for j in range(N):
                 Qj = self.Q.copy()
-                Qj[:2, :2] = self.path_weight(x_r[j + 1, 3:5])
+                v_r = x_r[j + 1, 3:5] if self.state == 'world' else wheel_dynamics.world_velocity(x_r[j + 1], p)
+                Qj[:2, :2] = self.path_weight(v_r)
                 Qbar[NX * j:NX * (j + 1), NX * j:NX * (j + 1)] = Qj if j < N - 1 else self.P_scale * Qj
             Q_last = Qj
         if self.terminal == 'dare':
@@ -177,10 +189,12 @@ class LinearMPCv2:
             # variables [u~ (4N), s (4N)]; rows  -G Bbar u~ + s >= w_lin - w_max,
             # G Bbar u~ + s >= -w_max - w_lin,  s >= 0;  w_lin = w(x_r) + G e
             ns = 4 * N
+            w_of = wheel_speeds if self.state == 'world' else wheel_dynamics.wheel_speeds
+            dw_dx = wheel_speed_jacobian if self.state == 'world' else wheel_dynamics.wheel_speed_jacobian
             G = np.zeros((ns, NX * N))
             for j in range(N):
-                G[4 * j:4 * (j + 1), NX * j:NX * (j + 1)] = wheel_speed_jacobian(x_r[j + 1], p)
-            w_lin = wheel_speeds(x_r[1:], p).ravel() + G @ e
+                G[4 * j:4 * (j + 1), NX * j:NX * (j + 1)] = dw_dx(x_r[j + 1], p)
+            w_lin = w_of(x_r[1:], p).ravel() + G @ e
             GB = G @ Bbar
             nc = self.C.shape[1]
             qp_H = np.zeros((nu + ns, nu + ns))

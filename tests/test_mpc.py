@@ -8,7 +8,7 @@ import numpy as np
 
 _ROOT = os.path.join(os.path.dirname(__file__), "..")
 sys.path.insert(0, os.path.join(_ROOT, "source", "mecanum_tracking_ws", "mecanum_tracking_ws"))
-from mpc import dynamics, params, tables  # noqa: E402
+from mpc import dynamics, params, tables, wheel_dynamics  # noqa: E402
 from mpc.lmpc import LinearMPCv2, solve_dare  # noqa: E402
 from mpc.reference import Reference  # noqa: E402
 
@@ -124,6 +124,64 @@ def test_tables_consistent():
     tab = tables.path_table(t, xy, a, P, 0.05, periodic=True)
     assert np.allclose(tab[:, 6], v / r, atol=1e-6) and np.allclose(tab[:, 4], v, atol=1e-4)
     assert np.allclose(tab[:, 7:], tab[0, 7:], atol=1e-6)
+
+
+def test_wheel_state_model():
+    # the wheel-speed state model is dynamics.py in other coordinates: z_dot = d from_world(x) / dt, the same motion
+    rng = np.random.default_rng(0)
+    for _ in range(50):
+        x = np.r_[rng.normal(0, 1, 2), rng.uniform(-np.pi, np.pi), rng.normal(0, 0.1, 2), rng.normal(0, 0.5)]
+        u = rng.normal(0, 0.02, 4)
+        z = wheel_dynamics.from_world(x, P)
+        assert np.allclose(wheel_dynamics.to_world(z, P), x)
+        xd, h = dynamics.f(x, u, P), 1e-7
+        zd = (wheel_dynamics.from_world(x + h * xd, P) - wheel_dynamics.from_world(x - h * xd, P)) / (2 * h)
+        assert np.abs(wheel_dynamics.f(z, u, P) - zd).max() < 1e-5
+        # 1 s: both RK4s converge to the same solution (at T = 0.05 their truncation errors differ by up to ~0.02)
+        xa, za = x.copy(), z.copy()
+        for _ in range(200):
+            xa, za = dynamics.rk4_step(xa, u, 0.005, P), wheel_dynamics.rk4_step(za, u, 0.005, P)
+        assert np.abs(wheel_dynamics.to_world(za, P) - xa).max() < 1e-5
+        # exact Jacobians (continuous and RK4) against finite differences
+        A, B = wheel_dynamics.jacobians(z, u, P)
+        An = np.stack([(wheel_dynamics.f(z + 1e-6 * e, u, P) - wheel_dynamics.f(z - 1e-6 * e, u, P)) / 2e-6
+                       for e in np.eye(6)], 1)
+        assert np.abs(A - An).max() < 1e-5
+        Ad, Bd = wheel_dynamics.rk4_jacobians(z, u, 0.05, P)
+        Bn = np.stack([(wheel_dynamics.rk4_step(z, u + 1e-6 * e, 0.05, P) - wheel_dynamics.rk4_step(z, u - 1e-6 * e, 0.05, P))
+                       / 2e-6 for e in np.eye(4)], 1)
+        assert np.abs(Bd - Bn).max() < 1e-5
+    # wheel 4 follows from the rolling constraints; the encoders' slip part (1, 1, -1, -1) is dropped
+    w = wheel_dynamics.wheel_speeds(z, P)
+    assert np.isclose(w[3], w[0] + w[1] - w[2])
+    assert np.allclose(wheel_dynamics.from_encoders(x, w + 0.5 * np.array([1, 1, -1, -1]), P), z)
+
+
+def test_wheel_state_controller():
+    # the same tracking problem in both states: nearly the same torques (the velocity error is measured in other
+    # coordinates and the model linearised in them), and sub-mm closed-loop tracking on the nominal plant
+    ref = Reference(P, "square", None, 0.1, "tangent")
+    ref.anchor((0.0, 0.0, 0.0))
+    x_r, u_r = ref.horizon(5.0, 0.05, 10)
+    x = x_r[0] + np.array([0.02, -0.01, 0.1, 0.01, 0.0, 0.05])
+    for limit in (False, True):
+        u0, _ = LinearMPCv2(P, terminal="dare", wheel_speed_limit=limit).step(x, x_r, u_r, u_r[0])
+        u1, info = LinearMPCv2(P, terminal="dare", wheel_speed_limit=limit, state="wheel").step(
+            wheel_dynamics.from_world(x, P), wheel_dynamics.from_world(x_r, P), u_r, u_r[0])
+        assert info["status"] == 0 and np.abs(u1 - u0).max() < 0.1 * np.abs(u0).max()
+    tab = tables.reference_table(Reference(P, "figure8", None, 0.1, "tangent"), 0.01, 0.05)
+    mpc = LinearMPCv2(P, terminal="dare", state="wheel")
+    z = wheel_dynamics.from_world(tables.horizon_from_rows(_interp(tab, np.zeros(1)), 0)[0][0], P)
+    u_applied, err = np.zeros(4), []
+    for k in range(400):
+        x_r, u_r = tables.horizon_from_rows(_interp(tab, 0.05 * (k + np.arange(11))), 10)
+        u, info = mpc.step(z, wheel_dynamics.from_world(x_r, P), u_r, u_applied)
+        assert info["status"] == 0
+        err.append(np.hypot(*(z[:2] - x_r[0, :2])))
+        u_applied = u
+        for _ in range(10):
+            z = wheel_dynamics.rk4_step(z, u, 0.005, P)
+    assert max(err) < 1e-4
 
 
 def test_horizon_unwraps_heading():

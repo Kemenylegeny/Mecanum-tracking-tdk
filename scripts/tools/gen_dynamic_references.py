@@ -16,11 +16,15 @@ Paths (all start at the origin; the anchor places them on the robot):
     stop_go        straight line: forward / backward / forward sprints at alpha * 0.244 m/s, each started and stopped
                    with a harder acceleration: 1 m/s^2, 3 m/s^2, a step (within one table sample)
 Heading fixed (default) or tangent; tangent lowers v_max on curves (the yaw rate also turns the wheels).
+--speed v: constant path speed v instead (still <= alpha * v_max), e.g. the curves at the comparison's 0.1 m/s, inside
+the RL's training speeds (refs/test_dynamic_slow).
 
 Columns: t, X, Y, theta, vx, vy, omega, tau_1..tau_4 (mpc/tables.py path_table: inverse dynamics on the samples,
 step-averaged over the MPC's T).
 
     python scripts/tools/gen_dynamic_references.py            # -> refs/test_dynamic/
+    python scripts/tools/gen_dynamic_references.py --speed 0.1 --a_max 0.3 --shapes circle_small slalom rose \
+        --out $R/test_dynamic_slow
 """
 
 import argparse
@@ -106,7 +110,7 @@ def time_law(s: np.ndarray, v: np.ndarray, dt: float) -> tuple[np.ndarray, np.nd
     return t, np.interp(t, t_s, s)
 
 
-def curve_table(shape, p, alpha, a_max, heading, dt, T):
+def curve_table(shape, p, alpha, a_max, heading, dt, T, speed=None):
     path = dense_path(shape)
     s = arc_length(path)
     phi = directions(path)
@@ -116,15 +120,19 @@ def curve_table(shape, p, alpha, a_max, heading, dt, T):
     else:
         psi, dpsi_ds = np.zeros_like(s), np.zeros_like(s)
     v_lim = alpha * motor.OMEGA_MAX / wheel_per_speed(phi - psi, dpsi_ds, p)
+    if speed is not None:
+        v_lim = np.minimum(v_lim, speed)
     t, sq = time_law(s, forward_backward(s, v_lim, a_max), dt)
     xy = np.c_[np.interp(sq, s, path[:, 0]), np.interp(sq, s, path[:, 1])]
     return tables.path_table(t, xy, np.interp(sq, s, psi), p, T, periodic=False)
 
 
-def stop_go_table(p, alpha, dt, T, length=0.7, pause=0.5, accels=(1.0, 3.0, None)):
-    """Straight sprints along x (forward, backward, forward, ...) at alpha * v_max, trapezoidal speed with the given
-    accelerations (None: a speed step within one sample), a pause at rest between them."""
+def stop_go_table(p, alpha, dt, T, length=0.7, pause=0.5, accels=(1.0, 3.0, None), speed=None):
+    """Straight sprints along x (forward, backward, forward, ...) at alpha * v_max (or speed), trapezoidal speed with the
+    given accelerations (None: a speed step within one sample), a pause at rest between them."""
     v = alpha * motor.OMEGA_MAX * p.R  # body axis: one wheel speed per unit speed = 1 / R
+    if speed is not None:
+        v = min(v, speed)
     t_parts, x_parts, x0, t0 = [], [], 0.0, 0.0
     for k, acc in enumerate(accels):
         a = acc if acc is not None else v / (dt / 4)  # step: the ramp falls between two table samples
@@ -148,6 +156,7 @@ def stop_go_table(p, alpha, dt, T, length=0.7, pause=0.5, accels=(1.0, 3.0, None
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--alpha", type=float, default=0.9, help="share of the direction-dependent speed limit v_max")
+    ap.add_argument("--speed", type=float, default=None, help="constant path speed [m/s] (default: --alpha * v_max)")
     ap.add_argument("--a_max", type=float, default=1.5, help="tangential acceleration limit on the curves [m/s^2]")
     ap.add_argument("--heading", choices=["fixed", "tangent"], default="fixed")
     ap.add_argument("--shapes", nargs="+", default=list(SHAPES), choices=list(SHAPES))
@@ -161,9 +170,9 @@ def main():
     os.makedirs(args.out, exist_ok=True)
     for shape in args.shapes:
         if shape == "stop_go":
-            table = stop_go_table(p, args.alpha, args.dt, args.T)
+            table = stop_go_table(p, args.alpha, args.dt, args.T, speed=args.speed)
         else:
-            table = curve_table(shape, p, args.alpha, args.a_max, args.heading, args.dt, args.T)
+            table = curve_table(shape, p, args.alpha, args.a_max, args.heading, args.dt, args.T, args.speed)
         tables.save_table(os.path.join(args.out, f"{shape}.csv"), table)
         speed = np.hypot(table[:, 4], table[:, 5])
         acc = np.linalg.norm(np.gradient(np.c_[np.cos(table[:, 3]) * table[:, 4] - np.sin(table[:, 3]) * table[:, 5],

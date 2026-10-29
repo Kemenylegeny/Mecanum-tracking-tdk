@@ -143,7 +143,7 @@ def main():
             w = (robot.data.joint_vel[:, wheel_ids] * wheel_sign).cpu().numpy()  # MPC sign convention
             extra = None
             if args_cli.controller == "mpc":
-                u, infos = mpc(x, preview)
+                u, infos = mpc(x, preview, w)
                 compute_ms = [info["step_ms"] for info in infos]
                 extra = mpc.extra(infos)
                 joint_u = torch.tensor(u, dtype=torch.float32, device=uenv.device) * wheel_sign

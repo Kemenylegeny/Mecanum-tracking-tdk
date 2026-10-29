@@ -141,14 +141,16 @@ def boxed_text(img, xy, lines, fonts, pad, fill=(0, 0, 0, 150), swatch=None):
     return w, h
 
 
-def overlay(frame, who, color, err, legend):
+def overlay(frame, who, color, err, legend, mm=False):
+    """err = (position error [cm], heading error [deg]); mm: show the position error in mm."""
     img = Image.fromarray(frame)
     h = img.height
     fonts = [ImageFont.truetype(FONT_BOLD, h // 22), ImageFont.truetype(FONT, h // 36)]
     pad = h // 60
     white, grey = (255, 255, 255), (225, 225, 220)
+    pos = f"{10 * err[0]:.1f} mm" if mm else f"{err[0]:.2f} cm"
     boxed_text(img, (pad, pad), [(who[0], 0, white), (who[1], 1, grey),
-                                 (f"hiba: {err[0]:.2f} cm · {err[1]:.1f}°", 1, white)], fonts, pad, swatch=color)
+                                 (f"hiba: {pos} · {err[1]:.1f}°", 1, white)], fonts, pad, swatch=color)
     if legend:
         leg = [((30, 215, 65), "referencia pálya"), ((255, 90, 0), "megtett út"), ((230, 25, 25), "aktuális ref. pont"),
                ((30, 100, 230), "előretekintés (10 × 0.05 s)")]

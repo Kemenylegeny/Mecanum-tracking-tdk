@@ -7,7 +7,7 @@ R=source/mecanum_tracking_ws/mecanum_tracking_ws/tasks/manager_based/mecanum_tra
 OUT=logs/videos/raw/mpc_test_dynamic
 for spec in circle_small:2.2 slalom:1.75 rose:2.4 sharp_square:2.3 stop_go:1.9; do
     shape=${spec%%:*}; zoom=${spec##*:}
-    $PY -u scripts/rsl_rl/play_shapes.py --task Mecanum-Tracking-Torque-Eval-v0 --controller mpc --mpc_S 100 --mpc_wheel_limit \
+    $PY -u scripts/rsl_rl/play_shapes.py --task Mecanum-Tracking-Torque-Eval-v0 --controller mpc --mpc_state world --mpc_S 100 --mpc_wheel_limit \
         --traj_dir $R/test_dynamic --shapes $shape --raw_dir $OUT --extra_s 0.4 --width 1080 --height 1080 \
         --cam_zoom $zoom --cam_elev 65 --marker_scale 0.35 --line_radius 0.012 --headless --enable_cameras \
         > $OUT.$shape.log 2>&1 || exit 1

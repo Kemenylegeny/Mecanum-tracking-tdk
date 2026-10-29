@@ -14,7 +14,7 @@ python scripts/tools/gen_training_trajectories.py --own --ramp --prefix unseen -
 (cd $R && sha256sum -c --quiet generated.sha256)   # no output = identical
 ```
 
-The small sets (`test`, `test_fixed`, `test_tangent`, `test_shapes`, `test_dynamic`, `test_corners_slow`,
-`test_corners_fast`) are in git; their generators are `tools/gen_reference_trajectories.py`,
+The small sets (`test`, `test_fixed`, `test_tangent`, `test_shapes`, `test_dynamic`, `test_dynamic_slow`,
+`test_corners_slow`, `test_corners_fast`) are in git; their generators are `tools/gen_reference_trajectories.py`,
 `tools/export_mpc_references.py`, `tools/gen_shape_references.py`, `tools/gen_dynamic_references.py` and
 `tools/gen_corner_references.py`.

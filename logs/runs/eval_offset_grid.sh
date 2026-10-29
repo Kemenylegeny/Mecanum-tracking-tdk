@@ -13,7 +13,7 @@ jobs() {
         dy=$(python3 -c "print($cm / 100)"); dpsi=$(python3 -c "import math; print(math.radians($deg))")
         name=y${cm}_psi${deg}
         echo "--task Mecanum-Tracking-Torque-Offset-Eval-v0 --controller policy --checkpoint $CKPT --out logs/eval/rl_offset_seed0/offsets/$name --log logs/runs/offsets/rl_$name.log --start_offset 0 $dy $dpsi"
-        echo "--controller mpc --mpc_S 100 --mpc_wheel_limit --out logs/eval/mpc/offsets/$name --log logs/runs/offsets/mpc_$name.log --start_offset 0 $dy $dpsi"
+        echo "--controller mpc --mpc_state world --mpc_S 100 --mpc_wheel_limit --out logs/eval/mpc/offsets/$name --log logs/runs/offsets/mpc_$name.log --start_offset 0 $dy $dpsi"
     done
 }
 mkdir -p logs/runs/offsets
