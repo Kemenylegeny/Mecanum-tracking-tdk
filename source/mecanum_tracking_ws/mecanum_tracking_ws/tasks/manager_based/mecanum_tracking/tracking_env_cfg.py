@@ -60,6 +60,12 @@ COMPARE_CURRICULUM_TOP = 1.2
 """Top of the speed curriculum of the comparison tasks: the training references (refs/train_own, 0.1 m/s at s = 1)
 are generated with wheel speeds <= 8.06 / 1.2 rad/s, so even the fastest one stays feasible
 (tools/gen_training_trajectories.py --own)."""
+COMPARE_TRAIN_REFS = ("train_own", "train_own_sharp")
+"""Training references of the comparison tasks, each env draws one of all their files uniformly: the smooth random
+curves (refs/train_own, turns >= 0.2 m radius) and, since 2026-10-28, as many with sharp corners and tight turns
+(refs/train_own_sharp, tools/gen_training_trajectories.py --kind sharp: random polygons, sharp with a fixed heading and
+rounded with a tangent one, and curves with turns down to 0.025 m radius), which the test sets have (test_shapes,
+test_corners_*, test_dynamic) and train_own had not."""
 TORQUE_ACTION_SCALE = 0.25
 """Comparison tasks: wheel torque per policy output unit [Nm]. Only the parametrization of the policy output: the
 torque is clipped to +-u_max = +-1.95 Nm, the same box as the MPC's. The reference torques are <= 0.01 Nm and the
@@ -238,15 +244,16 @@ class ObservationsCfg:
 
 @configclass
 class CompareObservationsCfg:
-    """Comparison tasks: the policy sees what the MPC's step(x_meas, x_r, u_r, u_applied) gets, expressed in the
-    robot's frame (the dynamics are invariant to planar rigid motions, so the world pose itself carries no
-    information):
+    """Comparison tasks: the policy sees what the MPC's step(x_meas, x_r, u_r) uses, expressed in the robot's frame
+    (the dynamics are invariant to planar rigid motions, so the world pose itself carries no information):
     * ``ref_preview``: x_r,0..N relative to x: (dX, dY) and (X_dot_r, Y_dot_r) in the robot's heading frame,
       sin/cos(psi_r - psi), psi_dot_r; 11 points (N = 10, T = 0.05 s);
-    * ``base_vel``: the velocity part of x: (X_dot, Y_dot) in the heading frame, psi_dot;
-    * ``last_torque``: u_applied, the torques of the previous step.
-    u_r (the MPC's feedforward) is left out in the main case; ablation: ``ref_preview`` n_extra = 4 (the tau columns of
-    the files), only with the speed curriculum off (the torques do not scale with the time scale)."""
+    * ``base_vel``: the velocity part of x: (X_dot, Y_dot) in the heading frame, psi_dot.
+    u_r (the MPC's feedforward) is never given to the policy: it is the output of the MPC's model (inverse dynamics),
+    and the RL stays model-free (2026-10-28); no reward uses it either. (``ref_preview`` n_extra = 4 would pass the tau
+    columns of the files, only with the speed curriculum off: the torques do not scale with the time scale.)
+    No u_applied since 2026-10-28: the MPC needed it only for S, and the motors have no delay or dynamics, so the
+    previous torque is not part of the state (the runs before: ``last_torque``, see :func:`add_smoothness_terms`)."""
 
     @configclass
     class PolicyCfg(ObsGroup):
@@ -256,9 +263,6 @@ class CompareObservationsCfg:
             noise=Unoise(n_min=-0.005, n_max=0.005),
         )
         base_vel = ObsTerm(func=mdp.base_planar_vel_b, noise=Unoise(n_min=-0.01, n_max=0.01))
-        last_torque = ObsTerm(
-            func=mdp.last_wheel_torque, params={"action_name": "wheel_torque", "scale": 1.0 / TORQUE_ACTION_SCALE}
-        )
 
         def __post_init__(self) -> None:
             self.enable_corruption = True
@@ -269,9 +273,10 @@ class CompareObservationsCfg:
 
 @configclass
 class CompareRewardsCfg:
-    """Comparison tasks: the kernels scaled to the 0.1 m/s / millimetre task, plus heading tracking (the MPC tracks
-    psi_r); the torque-rate penalty is the RL counterpart of the MPC's S, the wheel-speed penalty that of its soft
-    wheel-speed limit. ~3.5 per step at perfect tracking.
+    """Comparison tasks: the counterparts of the MPC's cost (Q, R, since 2026-10-28 without S and the soft wheel-speed
+    limit): the kernels scaled to the 0.1 m/s / millimetre task, plus heading tracking (the MPC tracks psi_r) and the
+    yaw-rate error (Q's psi_dot), and ``torque`` for R. ~3.5 per step at perfect tracking. The runs before
+    2026-10-28 also had a torque-rate (S) and a wheel-speed (soft limit) penalty, see :func:`add_smoothness_terms`.
 
     Position and heading have a coarse and a fine kernel each: a Gaussian kernel is only steep within ~its std, and
     both errors span a wide range (the training starts up to 0.4 m / 45 deg off, COMPARE_START_OFFSET_*). The coarse
@@ -287,20 +292,13 @@ class CompareRewardsCfg:
         func=mdp.track_heading_exp, weight=0.5, params={"command_name": "ref_traj", "std": 0.2}
     )
     """Until 2026-10-26 named track_heading (runs before torque_offset_seed0 log it under that name)."""
-    torque_rate = RewTerm(func=mdp.torque_rate_l2, weight=-20.0, params={"action_name": "wheel_torque"})
-    """-20: with -1 the first policies chattered (torque RMS 5x the MPC's, du up to 0.15 Nm per step; 2026-10-23)."""
-    wheel_speed = RewTerm(
-        func=mdp.wheel_speed_excess_l2,
-        weight=-0.1,
-        params={
-            "omega_max": own_mecanum.MOTOR_NO_LOAD_SPEED,
-            "asset_cfg": SceneEntityCfg("robot", joint_names=own_mecanum.WHEEL_JOINT_NAMES, preserve_order=True),
-        },
-    )
-    """The MPC's soft wheel-speed limit, |w| <= 8.06 rad/s (the chattering policies spun the wheels up to 13 rad/s)."""
     yaw_rate_error = RewTerm(func=mdp.yaw_rate_error_l2, weight=-0.01, params={"command_name": "ref_traj"})
-    torque = RewTerm(func=mdp.torque_l2, weight=0.0, params={"action_name": "wheel_torque"})
-    """Off (0): the RL counterpart of the MPC's R, to switch on if the torques get noisy."""
+    torque = RewTerm(func=mdp.torque_l2, weight=-4.0, params={"action_name": "wheel_torque"})
+    """The RL counterpart of the MPC's R (since 2026-10-28; off before): ||u||^2, the plain torque, as the policy gets
+    no reference torque (u_r is the output of a model, the RL stays model-free). -4: the MPC's R / Q_pos = 400 / 40000
+    = 0.01 times the curvature of the two position kernels at zero error, 1 / 0.05^2 + 1 / 0.25^2 = 416 per m^2, so
+    torque and position error trade off as in the MPC. ||u - u_r||^2 would differ by <= ~1e-4 per step (u_r <= 0.0045
+    Nm on refs/train_own)."""
 
 
 @configclass
@@ -432,10 +430,31 @@ def apply_comparison(cfg: "MecanumTrackingEnvCfg") -> None:
     apply_robot(cfg, "own")
     cfg.decimation = COMPARE_DECIMATION
     cfg.sim.render_interval = cfg.decimation
-    cfg.commands.ref_traj.traj_files = _refs("train_own")
+    cfg.commands.ref_traj.traj_files = [f for sub in COMPARE_TRAIN_REFS for f in _refs(sub)]
     if cfg.curriculum.speed is not None:
         cfg.curriculum.speed.params["scale_range"] = (0.5, COMPARE_CURRICULUM_TOP)
         cfg.curriculum.speed.params["up_error"] = 0.05
+
+
+def add_smoothness_terms(cfg: "MecanumTrackingTorqueEnvCfg") -> None:
+    """The comparison task as trained until 2026-10-27 (torque_seed0, torque_offset_seed0): the RL counterparts of the
+    MPC's S and soft wheel-speed limit, and u_applied in the observation (appended last, as in those runs, so their
+    checkpoints load). Dropped on 2026-10-28 together with S and the soft limit of the MPC (EXPERIMENTS.md)."""
+    cfg.observations.policy.last_torque = ObsTerm(
+        func=mdp.last_wheel_torque, params={"action_name": "wheel_torque", "scale": 1.0 / TORQUE_ACTION_SCALE}
+    )
+    # -20: with -1 the first policies chattered (torque RMS 5x the MPC's, du up to 0.15 Nm per step; 2026-10-23)
+    cfg.rewards.torque_rate = RewTerm(func=mdp.torque_rate_l2, weight=-20.0, params={"action_name": "wheel_torque"})
+    # the MPC's soft wheel-speed limit, |w| <= 8.06 rad/s (the chattering policies spun the wheels up to 13 rad/s)
+    cfg.rewards.wheel_speed = RewTerm(
+        func=mdp.wheel_speed_excess_l2,
+        weight=-0.1,
+        params={
+            "omega_max": own_mecanum.MOTOR_NO_LOAD_SPEED,
+            "asset_cfg": SceneEntityCfg("robot", joint_names=own_mecanum.WHEEL_JOINT_NAMES, preserve_order=True),
+        },
+    )
+    cfg.rewards.torque.weight = 0.0  # the R counterpart was off then
 
 
 def to_play(cfg: "MecanumTrackingEnvCfg") -> None:
@@ -530,7 +549,9 @@ class MecanumTrackingTorqueEnvCfg(MecanumTrackingEnvCfg):
     """THE comparison task (docs/OSSZEHANGOLAS.md): the policy outputs the four wheel torques at 20 Hz, the same
     plant, references, horizon and limits as the LTV-MPC. Trained from random initial errors (CompareCommandsCfg,
     since 2026-10-26; the runs before torque_offset_seed0 started on the reference and ended at 1 m deviation, see
-    their params/env.yaml)."""
+    their params/env.yaml). Since 2026-10-28 without the torque-rate / wheel-speed penalties and the last-torque
+    observation, as the MPC without S and the soft wheel-speed limit (the earlier config: -Torque-Offset-v0), and
+    trained on sharp corners and tight turns too (COMPARE_TRAIN_REFS; torque_plain_seed0 had refs/train_own only)."""
 
     actions: TorqueActionsCfg = TorqueActionsCfg()
     commands: CompareCommandsCfg = CompareCommandsCfg()
@@ -567,6 +588,35 @@ class MecanumTrackingTorqueEnvCfg_EVAL(MecanumTrackingTorqueEnvCfg_PLAY):
 
 
 @configclass
+class MecanumTrackingTorqueOffsetEnvCfg(MecanumTrackingTorqueEnvCfg):
+    """The comparison task as trained until 2026-10-27 (torque_offset_seed0, model_311.pt): + the torque-rate and
+    wheel-speed penalties and the last-torque observation (:func:`add_smoothness_terms`), the smooth training
+    references only."""
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        add_smoothness_terms(self)
+        self.commands.ref_traj.traj_files = _refs("train_own")
+
+
+@configclass
+class MecanumTrackingTorqueOffsetEnvCfg_PLAY(MecanumTrackingTorqueEnvCfg_PLAY):
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        add_smoothness_terms(self)
+
+
+@configclass
+class MecanumTrackingTorqueOffsetEnvCfg_EVAL(MecanumTrackingTorqueEnvCfg_EVAL):
+    """Evaluation of the checkpoints trained until 2026-10-27 (model_311.pt; model_600.pt of torque_seed0 has the
+    same observation)."""
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        add_smoothness_terms(self)
+
+
+@configclass
 class MecanumTrackingOwnEnvCfg(MecanumTrackingTorqueEnvCfg):
     """Action-space ablation of the comparison: the same task, but the policy outputs a base twist -> mecanum IK ->
     wheel speed setpoints of a velocity loop (MECANUM_VEL_CFG: needs an armature, so a slightly different plant)."""
@@ -577,9 +627,7 @@ class MecanumTrackingOwnEnvCfg(MecanumTrackingTorqueEnvCfg):
         super().__post_init__()
         # the robot's top speed is 8.06 rad/s * 0.0303 m = 0.24 m/s
         self.actions.base_vel.scale = (0.25, 0.25, 1.0)
-        self.observations.policy.last_torque = ObsTerm(func=mdp.last_action)
-        self.rewards.torque_rate = RewTerm(func=mdp.action_rate_l2, weight=-0.01)
-        self.rewards.torque = None
+        self.rewards.torque = None  # no wheel_torque action term
 
 
 @configclass

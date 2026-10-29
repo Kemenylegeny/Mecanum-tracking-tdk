@@ -246,7 +246,8 @@ def main():
     if args_cli.controller == "mpc":
         S = "off" if args_cli.mpc_S <= 0 else f"{args_cli.mpc_S:g}"
         who = f"LTV-MPC: {args_cli.mpc_terminal} terminal, S = {S}" + (
-            f", Q_path {args_cli.mpc_Q_path[0]:g} / {args_cli.mpc_Q_path[1]:g}" if args_cli.mpc_Q_path else "")
+            f", Q_path {args_cli.mpc_Q_path[0]:g} / {args_cli.mpc_Q_path[1]:g}" if args_cli.mpc_Q_path else "") + (
+            ", soft wheel-speed limit" if args_cli.mpc_wheel_limit else "")
     else:
         who = f"checkpoint: {os.path.relpath(args_cli.checkpoint)}"
     summary = []

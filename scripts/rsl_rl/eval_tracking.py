@@ -4,7 +4,7 @@ Both controllers of the comparison run HERE, in the same Isaac Lab env (docs/OSS
 references, start states, resets, termination and log. Only the controller differs:
     --controller policy   the trained policy (exported to TorchScript, evaluated on the CPU, one env at a time)
     --controller mpc      the LTV-MPC (mecanum_tracking_ws/mpc/lmpc.py = Mecanum-Robot-MPC-TDK's LinearMPCv2 + DARE
-                          terminal weight + torque-change penalty S), CPU, one env at a time
+                          terminal weight; S and the soft wheel-speed limit off by default), CPU, one env at a time
 One env per test trajectory (fixed_assignment), one lap each (the reference stops at its end: loop=False), then
 --hold seconds at the end pose; no noise / DR / curriculum.
 
@@ -14,6 +14,7 @@ The MPC (inputs, options) lives in mpc_controller.py, shared with play_shapes.py
     python scripts/rsl_rl/eval_tracking.py --controller mpc --out logs/eval/mpc/test_fixed --traj_dir $R/test_fixed --headless
     python scripts/rsl_rl/eval_tracking.py --controller policy --checkpoint <model.pt> --out logs/eval/rl_seed0/test_fixed \
         --traj_dir $R/test_fixed --headless
+    # checkpoints trained until 2026-10-27 (last-torque observation): --task Mecanum-Tracking-Torque-Offset-Eval-v0
     # scenario 2: 30 cm / 30 deg initial error (both controllers):  --start_offset 0.3 0.0 0.52
 
 Then:  python scripts/tools/metrics.py --group RL logs/eval/rl_seed*/test_fixed/circle.csv --group MPC logs/eval/mpc/test_fixed/circle.csv

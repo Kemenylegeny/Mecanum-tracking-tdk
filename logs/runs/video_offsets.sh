@@ -15,13 +15,13 @@ jobs() {
         cm=$(echo $name | sed -E 's/y([0-9]+)_psi([0-9]+)/\1/'); deg=$(echo $name | sed -E 's/y([0-9]+)_psi([0-9]+)/\2/')
         off="0 $(python3 -c "print($cm / 100)") $(python3 -c "import math; print(math.radians($deg))")"
         [ "${WHO:-all}" != mpc ] && echo "rl $name --controller policy --checkpoint $CKPT --start_offset $off"
-        [ "${WHO:-all}" != rl ] && echo "mpc $name --controller mpc --start_offset $off"
+        [ "${WHO:-all}" != rl ] && echo "mpc $name --controller mpc --mpc_S 100 --mpc_wheel_limit --start_offset $off"
     done
 }
 mkdir -p $RAW
 jobs | xargs -P 2 -L 1 bash -c '
     who=$1; name=$2; shift 2
-    '"$PY"' -u scripts/rsl_rl/play_shapes.py --task Mecanum-Tracking-Torque-Eval-v0 "$@" --traj_dir '"$R"' --shapes circle \
+    '"$PY"' -u scripts/rsl_rl/play_shapes.py --task Mecanum-Tracking-Torque-Offset-Eval-v0 "$@" --traj_dir '"$R"' --shapes circle \
         --raw_dir '"$RAW"'/$who/$name '"$CAM"' --headless --enable_cameras > '"$RAW"'/$who.$name.log 2>&1
     grep -q "\[shapes\] raw videos" '"$RAW"'/$who.$name.log || echo "FAILED $who $name"' _
 $PY scripts/tools/compose_offset_video.py --rl_raw $RAW/rl --mpc_raw $RAW/mpc --rl_eval logs/eval/rl_offset_seed0/offsets \

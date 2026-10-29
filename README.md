@@ -213,7 +213,7 @@ Vezérelv: **csak a szabályozó különbözhet.**
 | növény | Isaac Sim, `robot_measured.urdf` (2.134 kg), XM430 nyomatékmód, 360 Hz | **ugyanaz az env** |
 | modell | — | ugyanabból az URDF-ből (`mpc.params.from_urdf`): m_e = 2.215 kg, J_e = 0.03035 kg m² |
 | kimenet | 4 kerék-nyomaték, ±1.95 Nm, 20 Hz, ZOH | ugyanaz |
-| bemenet | x_r,0..10 a robothoz képest, a robot sebessége, u_applied | x, x_r,0..10, u_r,0..9, u_applied |
+| bemenet | x_r,0..10 a robothoz képest, a robot sebessége (2026-10-28 előtt + u_applied) | x, x_r,0..10, u_r,0..9 (u_applied csak a sosem aktív kemény Δu-korlátban) |
 | referencia | a társ `reference.py`-jából exportált CSV (0.1 m/s, rámpa, ψ_r, τ_r) | ugyanaz a CSV, ugyanabból a command-bufferből |
 | kezdőállapot | a pálya eleje, ψ = ψ_r(0); 2. forgatókönyv: 30 cm / 30° (`--start_offset 0.3 0 0.52`) | ugyanaz |
 | log, metrika | `eval_tracking.py` → CSV → `tools/metrics.py` | ugyanaz |
@@ -244,7 +244,8 @@ for SET in test_fixed test_tangent test_unseen_own; do
       --traj_dir $R/$SET --headless
 done
 # 2. forgatókönyv (kezdeti hiba): ... --start_offset 0.3 0.0 0.52 --out logs/eval/<ctrl>/test_fixed_offset
-# MPC-változatok: --mpc_terminal scaled (a társ P = 5Q-ja), --mpc_S 0 (S nélkül), --mpc_no_wheel_limit
+# MPC-változatok: --mpc_terminal scaled (a társ P = 5Q-ja), --mpc_S 100 --mpc_wheel_limit (a 2026-10-28 előtti alap:
+# S = 100·I és puha ω-korlát); a 2026-10-28 előtt tanított checkpointok: --task Mecanum-Tracking-Torque-Offset-Eval-v0
 
 # 4. metrikák (mm, fok; egy sor futásonként) és csoportok (seedek átlaga, bootstrap CI)
 $PY scripts/tools/metrics.py --table logs/eval/mpc/test_fixed/*.csv logs/eval/rl_seed0/test_fixed/*.csv

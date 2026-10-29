@@ -16,8 +16,11 @@ _TASKS = {
     "Mecanum-Tracking-Torque-v0": ("MecanumTrackingTorqueEnvCfg", "PPORunnerTrackingTorqueCfg"),
     "Mecanum-Tracking-Torque-Play-v0": ("MecanumTrackingTorqueEnvCfg_PLAY", "PPORunnerTrackingTorqueCfg"),
     "Mecanum-Tracking-Torque-Eval-v0": ("MecanumTrackingTorqueEnvCfg_EVAL", "PPORunnerTrackingTorqueCfg"),
-    # the ID torque_offset_seed0 was trained under; since 2026-10-26 the same config as Mecanum-Tracking-Torque-v0
-    "Mecanum-Tracking-Torque-Offset-v0": ("MecanumTrackingTorqueEnvCfg", "PPORunnerTrackingTorqueCfg"),
+    # the ID torque_offset_seed0 was trained under: the comparison task until 2026-10-27, with the torque-rate and
+    # wheel-speed penalties and the last-torque observation (model_311.pt, model_600.pt: evaluate with -Offset-Eval-v0)
+    "Mecanum-Tracking-Torque-Offset-v0": ("MecanumTrackingTorqueOffsetEnvCfg", "PPORunnerTrackingTorqueCfg"),
+    "Mecanum-Tracking-Torque-Offset-Play-v0": ("MecanumTrackingTorqueOffsetEnvCfg_PLAY", "PPORunnerTrackingTorqueCfg"),
+    "Mecanum-Tracking-Torque-Offset-Eval-v0": ("MecanumTrackingTorqueOffsetEnvCfg_EVAL", "PPORunnerTrackingTorqueCfg"),
     # its action-space ablation: twist + IK -> wheel speed setpoints (velocity loop), otherwise the same task
     "Mecanum-Tracking-Own-v0": ("MecanumTrackingOwnEnvCfg", "PPORunnerTrackingOwnCfg"),
     "Mecanum-Tracking-Own-Play-v0": ("MecanumTrackingOwnEnvCfg_PLAY", "PPORunnerTrackingOwnCfg"),
