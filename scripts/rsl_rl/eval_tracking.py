@@ -8,7 +8,8 @@ references, start states, resets, termination and log. Only the controller diffe
 One env per test trajectory (fixed_assignment), one lap each (the reference stops at its end: loop=False), then
 --hold seconds at the end pose; no noise / DR / curriculum.
 
-The MPC (inputs, options) lives in mpc_controller.py, shared with play_shapes.py.
+The MPC (inputs, options) lives in mpc_controller.py, shared with play_shapes.py. --mpc_trials runs several MPC weight
+sets at once (tools/tune_mpc_bo.py): set k on every trajectory, in envs k * n .. k * n + n - 1, logs in out/trial_kkk/.
 
     R=source/mecanum_tracking_ws/mecanum_tracking_ws/tasks/manager_based/mecanum_tracking/refs
     python scripts/rsl_rl/eval_tracking.py --controller mpc --out logs/eval/mpc/test_fixed --traj_dir $R/test_fixed --headless
@@ -38,6 +39,8 @@ parser.add_argument("--start_offset", type=float, nargs=3, default=[0.0, 0.0, 0.
 parser.add_argument("--hold", type=float, default=1.0, help="seconds recorded after the end of the reference")
 parser.add_argument("--loop", action="store_true", help="closed trajectories without ramps (legacy refs/test)")
 parser.add_argument("--seed", type=int, default=0)
+parser.add_argument("--mpc_trials", default=None,
+                    help="JSON list of MPC weight sets {Q: [6 values], R, S} (keys optional), each on every trajectory")
 sys.path.insert(0, os.path.dirname(__file__))  # next to play.py / cli_args.py (scripts/rsl_rl/)
 import cli_args  # isort: skip  # noqa: E402
 from mpc_controller import MPC_EXTRA, MPCController, add_mpc_args, robot_state  # isort: skip  # noqa: E402
@@ -51,6 +54,7 @@ if args_cli.controller == "policy" and not args_cli.checkpoint:
 simulation_app = AppLauncher(args_cli).app
 
 import importlib.metadata as metadata  # noqa: E402
+import json  # noqa: E402
 import tempfile  # noqa: E402
 import time  # noqa: E402
 
@@ -69,7 +73,16 @@ from mecanum_tracking_ws.tasks.manager_based.mecanum_tracking.tracking_env_cfg i
 def main():
     files = sorted(glob.glob(os.path.join(args_cli.traj_dir, "*.csv")))
     names = [os.path.splitext(os.path.basename(f))[0] for f in files]
-    env_cfg = parse_env_cfg(args_cli.task, device=args_cli.device, num_envs=len(files))
+    trials = None
+    if args_cli.mpc_trials:
+        if args_cli.controller != "mpc":
+            raise SystemExit("--mpc_trials needs --controller mpc")
+        with open(args_cli.mpc_trials) as f:
+            trials = json.load(f)
+        # env i follows trajectory i % n (fixed_assignment) with weight set i // n
+        names = [os.path.join(f"trial_{k:03d}", n) for k in range(len(trials)) for n in names]
+    n_envs = len(names)
+    env_cfg = parse_env_cfg(args_cli.task, device=args_cli.device, num_envs=n_envs)
     # own folder for the URDF -> USD conversion: the default /tmp/IsaacLab/usd_<second>_<random> repeats across
     # processes started in the same second (the env seeds `random` before the scene is built), and parallel runs
     # then overwrite each other's USD ("Failed to find an articulation")
@@ -89,6 +102,7 @@ def main():
     rb = robot_module(env_cfg.robot_name)
     # one lap per trajectory (in sim time) + hold; the episode outlasts the longest one, so no env times out
     ends = [np.loadtxt(f, delimiter=",", skiprows=1, usecols=0)[-1] / args_cli.time_scale for f in files]
+    ends = ends * (n_envs // len(files))
     env_cfg.episode_length_s = max(ends) + args_cli.hold + 1.0
     n_cols = len(open(files[0]).readline().split(","))
 
@@ -115,7 +129,8 @@ def main():
     if args_cli.controller == "mpc":
         if torque_term is None:
             raise SystemExit("the MPC commands wheel torques: use a Torque task")
-        mpc = MPCController(len(files), rb, env_cfg, uenv.step_dt, args_cli)
+        mpc = MPCController(n_envs, rb, env_cfg, uenv.step_dt, args_cli,
+                            weights=[trials[i // len(files)] for i in range(n_envs)] if trials else None)
     else:
         runner = OnPolicyRunner(env, agent_cfg.to_dict(), log_dir=None, device=agent_cfg.device)
         runner.load(args_cli.checkpoint)
@@ -128,8 +143,8 @@ def main():
 
     n_steps = int(np.ceil((max(ends) + args_cli.hold) / uenv.step_dt)) + 1
     ends_t = torch.tensor(ends, device=uenv.device)
-    rows = [[] for _ in files]
-    failed = torch.zeros(len(files), dtype=torch.bool, device=uenv.device)
+    rows = [[] for _ in names]
+    failed = torch.zeros(n_envs, dtype=torch.bool, device=uenv.device)
     done_any = torch.zeros_like(failed)
 
     obs = env.get_observations()
@@ -151,7 +166,7 @@ def main():
             else:
                 obs_cpu = obs["policy"].cpu()
                 acts, compute_ms = [], []
-                for i in range(len(files)):
+                for i in range(n_envs):
                     t0 = time.perf_counter()
                     acts.append(cpu_policy(obs_cpu[i : i + 1]))
                     compute_ms.append((time.perf_counter() - t0) * 1e3)
@@ -174,7 +189,7 @@ def main():
             in_lap = t <= ends_t + args_cli.hold
             lost = uenv.termination_manager.get_term("deviation")
             failed |= lost & ~done_any & in_lap
-            for i in range(len(files)):
+            for i in range(n_envs):
                 if done_any[i] or not in_lap[i]:
                     continue
                 o = origins[i]
@@ -191,11 +206,12 @@ def main():
               + [f"u_{j}" for j in range(n_u)] + [f"tau_{j}" for j in range(4)] + [f"w_{j}" for j in range(4)]
               + ["compute_ms", "failed"] + (MPC_EXTRA if args_cli.controller == "mpc" else []))
     for name, r in zip(names, rows):
+        os.makedirs(os.path.dirname(os.path.join(args_cli.out, name)), exist_ok=True)
         np.savetxt(os.path.join(args_cli.out, f"{name}.csv"), np.array(r), delimiter=",", header=",".join(header),
                    comments="", fmt="%.9g")
     with open(os.path.join(args_cli.out, "eval_args.txt"), "w") as f:
         f.write(" ".join(sys.argv) + "\n")
-    print(f"[eval] {args_cli.controller}: {len(files)} trajectories -> {args_cli.out}; "
+    print(f"[eval] {args_cli.controller}: {len(files)} trajectories x {len(trials) if trials else 1} -> {args_cli.out}; "
           f"lost: {[n for n, f in zip(names, failed) if f]}")
     # compute_ms: the MPC's step time / the policy's single-observation CPU forward pass, same machine
     env.close()

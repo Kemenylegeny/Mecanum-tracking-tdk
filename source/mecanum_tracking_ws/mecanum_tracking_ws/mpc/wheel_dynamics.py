@@ -24,15 +24,32 @@ from .params import RobotParams
 STATE_WHEELS = (0, 1, 2)
 """The wheels whose speeds are states (front-left, front-right, rear-left); rear-right = w1 + w2 - w3."""
 
+_MATS = {}
+
+
+def _mats(p: RobotParams):
+    """(W3, J3, G, the wheel-acceleration input matrix) of p, built once per parameter set and read-only: params.W
+    builds W on every access, which was half of an MPC step when f and the Jacobians called it (same values)."""
+    key = (p.m_s, p.J_C, p.J1, p.R, p.rho, p.l)
+    m = _MATS.get(key)
+    if m is None:
+        W = p.W[list(STATE_WHEELS)]
+        G = p.G
+        m = (W, np.linalg.inv(W), G, W @ np.diag([1.0 / p.m_e, 1.0 / p.m_e, 1.0 / p.J_e]) @ G)
+        for a in m:
+            a.flags.writeable = False
+        _MATS[key] = m
+    return m
+
 
 def W3(p: RobotParams):
     """Rows of the rolling constraints of the state wheels: [w1, w2, w3] = W3 nu  (3x3)."""
-    return p.W[list(STATE_WHEELS)]
+    return _mats(p)[0]
 
 
 def J3(p: RobotParams):
     """Body velocities from the state wheel speeds: nu = J3 [w1, w2, w3]  (3x3)."""
-    return np.linalg.inv(W3(p))
+    return _mats(p)[1]
 
 
 def all_wheels(p: RobotParams):
@@ -43,18 +60,19 @@ def all_wheels(p: RobotParams):
 def f(z, u, p: RobotParams):
     """Continuous dynamics z_dot = f(z, u)."""
     psi = z[2]
-    a, b, r = J3(p) @ z[3:6]
-    F_xi, F_eta, tau = p.G @ u
+    Wm, Jw, G, _ = _mats(p)
+    a, b, r = Jw @ z[3:6]
+    F_xi, F_eta, tau = G @ u
     mu = p.m_s / p.m_e
     c, s = np.cos(psi), np.sin(psi)
     nu_dot = np.array([mu * r * b + F_xi / p.m_e, -mu * r * a + F_eta / p.m_e, tau / p.J_e])
-    return np.r_[c * a - s * b, s * a + c * b, r, W3(p) @ nu_dot]
+    return np.r_[c * a - s * b, s * a + c * b, r, Wm @ nu_dot]
 
 
 def jacobians(z, u, p: RobotParams):
     """A_c = df/dz (6x6) and B_c = df/du (6x4) of the continuous dynamics."""
     psi = z[2]
-    Jw = J3(p)
+    Wm, Jw, _, Bw = _mats(p)
     a, b, r = Jw @ z[3:6]
     mu = p.m_s / p.m_e
     c, s = np.cos(psi), np.sin(psi)
@@ -64,9 +82,9 @@ def jacobians(z, u, p: RobotParams):
     A[1, 3:] = s * Jw[0] + c * Jw[1]
     A[2, 3:] = Jw[2]
     dnu = np.array([[0.0, mu * r, mu * b], [-mu * r, 0.0, -mu * a], [0.0, 0.0, 0.0]])  # d nu_dot / d nu
-    A[3:, 3:] = W3(p) @ dnu @ Jw
+    A[3:, 3:] = Wm @ dnu @ Jw
     B = np.zeros((6, 4))
-    B[3:] = W3(p) @ np.diag([1.0 / p.m_e, 1.0 / p.m_e, 1.0 / p.J_e]) @ p.G
+    B[3:] = Bw
     return A, B
 
 

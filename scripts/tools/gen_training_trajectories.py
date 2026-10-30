@@ -185,12 +185,14 @@ def tangent_heading(p: np.ndarray, t: np.ndarray, q: np.ndarray) -> np.ndarray:
 
 def make_trajectory(rng, dt, v_max, a_lat, a_tan, min_radius=0.2, n_arc=12000, heading="fixed", wheel=None,
                     ramp=False, model=None, T=0.05, kind="smooth", tight_radius=(0.025, 0.1),
-                    fillet_radius=(0.03, 0.15)):
+                    fillet_radius=(0.03, 0.15), max_length=None):
     """n_arc: arc-length resolution; 3000 overshoots the acceleration limits by ~25% after time resampling,
     12000 stays within ~4% (checked numerically). Smooth curves with a tighter turn than ``min_radius`` (near-cusps,
     where the speed would drop to ~0) are redrawn; tight ones unless their tightest turn is within ``tight_radius``.
     kind polygon: sharp corners (fixed heading) or arcs of a random radius in ``fillet_radius`` (tangent heading).
-    wheel = (omega_max, R, L): wheel-speed limit; model: RobotParams -> table with the reference torques."""
+    wheel = (omega_max, R, L): wheel-speed limit; model: RobotParams -> table with the reference torques.
+    max_length: only the first max_length metres of the path (an open path, so ramp; the curvature is the closed
+    curve's)."""
     while True:
         if kind == "polygon":
             path = random_polygon(rng)
@@ -207,6 +209,9 @@ def make_trajectory(rng, dt, v_max, a_lat, a_tan, min_radius=0.2, n_arc=12000, h
             kind == "smooth" and k_max <= 1.0 / min_radius
         ):
             break
+    if max_length is not None and length > max_length:
+        m = int(max_length / ds) + 1
+        p, kappa = p[:m], kappa[:m]
     if kind == "polygon" and heading == "fixed":
         kappa = np.zeros_like(kappa)  # the corners at constant speed: no lateral-acceleration limit there
     v_cap = None
@@ -242,12 +247,16 @@ def main():
                     help="kind polygon, tangent heading: range of the corner arc radius [m]")
     ap.add_argument("--omega_max", type=float, default=None, help="wheel-speed limit of the reference [rad/s]")
     ap.add_argument("--ramp", action="store_true", help="speed 0 at both ends (evaluation sets, loop=False)")
+    ap.add_argument("--max_length", type=float, default=None,
+                    help="keep the first MAX_LENGTH metres of each path (short open paths; needs --ramp)")
     ap.add_argument("--urdf", default=None, help="write the reference torques too (model of this URDF)")
     ap.add_argument("--T", type=float, default=0.05, help="MPC sampling time of the step-averaged torques [s]")
     ap.add_argument("--own", action="store_true",
                     help="comparison preset: v_max 0.1, a_tan 0.1, mixed heading, omega_max 8.06 / "
                          f"{CURRICULUM_TOP}, torques of robot_measured.urdf")
     args = ap.parse_args()
+    if args.max_length is not None and not args.ramp:
+        ap.error("--max_length cuts the closed path open: needs --ramp")
     model, wheel = None, None
     if args.own:
         args.v_max, args.a_tan, args.heading = 0.1, 0.1, "mixed"
@@ -270,7 +279,8 @@ def main():
         kind = args.kind if args.kind != "sharp" else ("polygon", "tight")[(i // 2) % 2]
         table = make_trajectory(rng, args.dt, args.v_max, args.a_lat, args.a_tan, args.min_radius, heading=heading,
                                 wheel=wheel, ramp=args.ramp, model=model, T=args.T, kind=kind,
-                                tight_radius=args.tight_radius, fillet_radius=args.fillet_radius)
+                                tight_radius=args.tight_radius, fillet_radius=args.fillet_radius,
+                                max_length=args.max_length)
         name = (f"{args.prefix}_{i:03d}" + (f"_{kind}" if args.kind == "sharp" else "")
                 + (f"_{heading}" if args.heading == "mixed" else ""))
         header = "t,X,Y,theta,vx,vy,omega" + (",tau_1,tau_2,tau_3,tau_4" if model is not None else "")

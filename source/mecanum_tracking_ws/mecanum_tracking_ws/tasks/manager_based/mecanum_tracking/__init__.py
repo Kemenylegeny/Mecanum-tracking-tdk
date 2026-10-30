@@ -16,6 +16,8 @@ _TASKS = {
     "Mecanum-Tracking-Torque-v0": ("MecanumTrackingTorqueEnvCfg", "PPORunnerTrackingTorqueCfg"),
     "Mecanum-Tracking-Torque-Play-v0": ("MecanumTrackingTorqueEnvCfg_PLAY", "PPORunnerTrackingTorqueCfg"),
     "Mecanum-Tracking-Torque-Eval-v0": ("MecanumTrackingTorqueEnvCfg_EVAL", "PPORunnerTrackingTorqueCfg"),
+    # + a 7 mm position kernel (torque_precise_seed0, 2026-10-30); evaluate with -Torque-Eval-v0
+    "Mecanum-Tracking-Torque-Precise-v0": ("MecanumTrackingTorquePreciseEnvCfg", "PPORunnerTrackingTorqueCfg"),
     # the ID torque_offset_seed0 was trained under: the comparison task until 2026-10-27, with the torque-rate and
     # wheel-speed penalties and the last-torque observation (model_311.pt, model_600.pt: evaluate with -Offset-Eval-v0)
     "Mecanum-Tracking-Torque-Offset-v0": ("MecanumTrackingTorqueOffsetEnvCfg", "PPORunnerTrackingTorqueCfg"),

@@ -23,6 +23,9 @@ nonzero reference velocity); the rows after a failure are dropped.
     cross_track   distance to the reference path (polyline of the logged reference points)
     contour, lag  the position error split normal / along the reference velocity
     heading       wrap(yaw - yaw_ref)
+    vel           ||(vx, vy) - (vx_ref, vy_ref)||, world frame (since 2026-10-30); at a sharp corner the reference
+                  velocity turns between two samples, so its peak there is ~ the speed itself
+    yaw_rate      wz - wz_ref (since 2026-10-30)
     omega_exceed  wheel speed above omega_max (8.06 rad/s, XM430): largest excess and share of the steps
     du            ||u_k - u_k-1|| (smoothness; the MPC's S and the RL's torque-rate penalty act on it)
 
@@ -123,6 +126,13 @@ def run_metrics(log: dict[str, np.ndarray], skip: float = 0.0, omega_max: float 
         "strafe_share": float(np.sum(np.abs(v_body_y)) / max(np.sum(speed), 1e-9)),
         "failed": float(np.any(log["failed"] > 0.5)) if "failed" in log else 0.0,
     }
+    ev = np.hypot(log["vx"] - log["vx_ref"], log["vy"] - log["vy_ref"])[m_]
+    m["vel_rmse_mps"] = float(np.sqrt(np.mean(ev**2)))
+    m["vel_max_mps"] = float(np.max(ev))
+    if "wz_ref" in log:
+        ew = (log["wz"] - log["wz_ref"])[m_]
+        m["yaw_rate_rmse_rad_s"] = float(np.sqrt(np.mean(ew**2)))
+        m["yaw_rate_max_rad_s"] = float(np.max(np.abs(ew)))
     if "yaw_ref" in log:
         de = wrap(log["yaw"] - log["yaw_ref"])[m_]
         m["heading_rmse_rad"] = float(np.sqrt(np.mean(de**2)))

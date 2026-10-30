@@ -15,7 +15,7 @@ jobs() {
         cm=$(echo $name | sed -E 's/y([0-9]+)_psi([0-9]+)/\1/'); deg=$(echo $name | sed -E 's/y([0-9]+)_psi([0-9]+)/\2/')
         off="0 $(python3 -c "print($cm / 100)") $(python3 -c "import math; print(math.radians($deg))")"
         [ "${WHO:-all}" != mpc ] && echo "rl $name --controller policy --checkpoint $CKPT --start_offset $off"
-        [ "${WHO:-all}" != rl ] && echo "mpc $name --controller mpc --mpc_state world --mpc_S 100 --mpc_wheel_limit --start_offset $off"
+        [ "${WHO:-all}" != rl ] && echo "mpc $name --controller mpc --mpc_Q 40000 40000 3283 2500 2500 100 --mpc_state world --mpc_S 100 --mpc_wheel_limit --start_offset $off"
     done
 }
 mkdir -p $RAW

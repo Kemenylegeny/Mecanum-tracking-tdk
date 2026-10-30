@@ -43,8 +43,9 @@ def paths(eval_dir, set_name, controllers):
 
 def run_rows(eval_dir, set_name, controllers):
     rows = ["| pálya | irányító | pozíció RMS / max [mm] | keresztirányú RMS / max [mm] | lag átlag [mm] | "
-            "sarok utáni max [mm] | irány RMS / max [°] | nyomaték RMS / max [Nm] | ‖Δu‖ max [Nm] | elveszett |",
-            "|---|---|---|---|---|---|---|---|---|---|"]
+            "sarok utáni max [mm] | irány RMS / max [°] | sebesség RMS / max [mm/s] | ψ̇ RMS / max [°/s] | "
+            "nyomaték RMS / max [Nm] | ‖Δu‖ max [Nm] | elveszett |",
+            "|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for path in paths(eval_dir, set_name, controllers):
         for ctl, label in controllers:
             lg = metrics.load_log(os.path.join(eval_dir, ctl, set_name, f"{path}.csv"))
@@ -53,6 +54,8 @@ def run_rows(eval_dir, set_name, controllers):
                 f"| {path} | {label} | {1e3 * m['pos_rmse_m']:.2f} / {1e3 * m['pos_max_m']:.1f} | "
                 f"{1e3 * m['contour_rmse_m']:.2f} / {1e3 * m['contour_max_m']:.1f} | {1e3 * m['lag_mean_m']:+.2f} | "
                 f"{corner_max(lg, w)} | {np.degrees(m['heading_rmse_rad']):.2f} / {np.degrees(m['heading_max_rad']):.2f} | "
+                f"{1e3 * m['vel_rmse_mps']:.1f} / {1e3 * m['vel_max_mps']:.0f} | "
+                f"{np.degrees(m['yaw_rate_rmse_rad_s']):.2f} / {np.degrees(m['yaw_rate_max_rad_s']):.1f} | "
                 f"{m['torque_rms_Nm']:.4f} / {m['torque_max_Nm']:.4f} | {m['action_rate_max']:.4f} | {int(m['failed'])} |")
     return rows
 

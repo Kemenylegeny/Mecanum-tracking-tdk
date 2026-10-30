@@ -94,7 +94,7 @@ $$
 H \mathrel{+}= 2 D^T \bar S D, \qquad f \mathrel{+}= 2 D^T \bar S \delta
 $$
 
-($\bar S = I_N \otimes S$.) A kemény rátakorlát (`du_max = u_max`) maradhat, úgysem aktív.
+($\bar S = I_N \otimes S$.) A kemény rátakorlát (`du_max = u_max`) maradhat, úgysem aktív. (2026-10-30: kivettük; kezdeti hiba nélkül sosem aktív, a BO-súlyokkal a kezdeti hibás indulásnál igen; `docs/dontesek.md`.)
 
 ### 2.3 Opcionális (nem kell az egyenértékűséghez)
 

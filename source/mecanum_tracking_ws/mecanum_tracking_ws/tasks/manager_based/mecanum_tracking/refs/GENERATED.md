@@ -18,3 +18,13 @@ The small sets (`test`, `test_fixed`, `test_tangent`, `test_shapes`, `test_dynam
 `test_corners_slow`, `test_corners_fast`) are in git; their generators are `tools/gen_reference_trajectories.py`,
 `tools/export_mpc_references.py`, `tools/gen_shape_references.py`, `tools/gen_dynamic_references.py` and
 `tools/gen_corner_references.py`.
+
+`tune_mpc` (in git, 3.7 MB) is the tuning set of the MPC's Bayesian optimisation (`tools/tune_mpc_bo.py`, 2026-10-30):
+paths of the training generator with their own seeds, open (one lap with speed ramps), not the test shapes:
+
+```bash
+G=scripts/tools/gen_training_trajectories.py
+python $G --own --ramp --kind smooth --max_length 3 --prefix tune_smooth --n 3 --seed 31 --out $R/tune_mpc
+python $G --own --ramp --kind polygon --prefix tune_polygon --n 3 --seed 32 --out $R/tune_mpc
+python $G --own --ramp --kind tight --prefix tune_tight --n 3 --seed 33 --out $R/tune_mpc
+```

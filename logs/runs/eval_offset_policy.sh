@@ -9,7 +9,7 @@ ev() { $PY -u scripts/rsl_rl/eval_tracking.py "$@" --headless; }
 ev --task Mecanum-Tracking-Torque-Offset-Eval-v0 --controller policy --checkpoint $NEW --out logs/eval/rl_offset_seed0/test_shapes --traj_dir $R/test_shapes > logs/runs/eval_rl_offset_seed0_test_shapes.log 2>&1
 ev --task Mecanum-Tracking-Torque-Offset-Eval-v0 --controller policy --checkpoint $NEW --out logs/eval/rl_offset_seed0/test_shapes_offset --traj_dir $R/test_shapes $OFF > logs/runs/eval_rl_offset_seed0_test_shapes_offset.log 2>&1
 ev --task Mecanum-Tracking-Torque-Offset-Eval-v0 --controller policy --checkpoint $OLD --out logs/eval/rl_seed0/test_shapes_offset --traj_dir $R/test_shapes $OFF > logs/runs/eval_rl_seed0_test_shapes_offset.log 2>&1
-ev --controller mpc --mpc_state world --mpc_S 100 --mpc_wheel_limit --out logs/eval/mpc/test_shapes_offset --traj_dir $R/test_shapes $OFF > logs/runs/eval_mpc_test_shapes_offset.log 2>&1
+ev --controller mpc --mpc_Q 40000 40000 3283 2500 2500 100 --mpc_state world --mpc_S 100 --mpc_wheel_limit --out logs/eval/mpc/test_shapes_offset --traj_dir $R/test_shapes $OFF > logs/runs/eval_mpc_test_shapes_offset.log 2>&1
 ev --task Mecanum-Tracking-Torque-Offset-Eval-v0 --controller policy --checkpoint $NEW --out logs/eval/rl_offset_seed0/test_dynamic --traj_dir $R/test_dynamic > logs/runs/eval_rl_offset_seed0_test_dynamic.log 2>&1
 ev --task Mecanum-Tracking-Torque-Offset-Eval-v0 --controller policy --checkpoint $OLD --out logs/eval/rl_seed0/test_dynamic --traj_dir $R/test_dynamic > logs/runs/eval_rl_seed0_test_dynamic.log 2>&1
 echo DONE

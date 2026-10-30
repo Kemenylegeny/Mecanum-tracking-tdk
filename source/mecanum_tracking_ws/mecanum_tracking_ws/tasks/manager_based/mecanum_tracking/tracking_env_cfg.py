@@ -588,6 +588,22 @@ class MecanumTrackingTorqueEnvCfg_EVAL(MecanumTrackingTorqueEnvCfg_PLAY):
 
 
 @configclass
+class MecanumTrackingTorquePreciseEnvCfg(MecanumTrackingTorqueEnvCfg):
+    """The comparison task + a third, millimetre position kernel (2026-10-30, torque_precise_seed0): the 50 mm fine
+    kernel is nearly flat at the RL's few-mm errors (its slope there is ~ e / 0.05^2), so nothing pulls the robot the
+    last millimetres in; the MPC tuned by tools/tune_mpc_bo.py tracks to ~0.4 mm. exp(-e^2 / 0.007^2): 0.5 at 5.8 mm.
+    Its curvature at zero error, 1 / 0.007^2 = 20400 per m^2, is ~50x that of the two other kernels, so position now
+    outweighs the torque term (-4) ~50x more than R / Q_pos = 0.01 of the MPC with its default Q (the tuned MPC's q_pos
+    is 250x the default). Evaluate with -Torque-Eval-v0 (same observations and actions)."""
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        self.rewards.track_pos_precise = RewTerm(
+            func=mdp.track_pos_exp, weight=1.0, params={"command_name": "ref_traj", "std": 0.007}
+        )
+
+
+@configclass
 class MecanumTrackingTorqueOffsetEnvCfg(MecanumTrackingTorqueEnvCfg):
     """The comparison task as trained until 2026-10-27 (torque_offset_seed0, model_311.pt): + the torque-rate and
     wheel-speed penalties and the last-torque observation (:func:`add_smoothness_terms`), the smooth training

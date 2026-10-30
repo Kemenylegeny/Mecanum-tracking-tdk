@@ -14,7 +14,7 @@ R=source/mecanum_tracking_ws/mecanum_tracking_ws/tasks/manager_based/mecanum_tra
 OFF="--start_offset 0 0.4 0.785398"
 ev() {
     name=$1; shift
-    $PY -u scripts/rsl_rl/eval_tracking.py --controller mpc "$@" --headless > logs/runs/eval_$name.log 2>&1
+    $PY -u scripts/rsl_rl/eval_tracking.py --controller mpc --mpc_Q 40000 40000 3283 2500 2500 100 "$@" --headless > logs/runs/eval_$name.log 2>&1
     grep -qE "Traceback|PhysX error|out of memory" logs/runs/eval_$name.log && echo "FAILED $name"
 }
 ev mpc_plain_check_test_corners_slow --mpc_state world --out logs/eval/mpc_plain_check/test_corners_slow --traj_dir $R/test_corners_slow

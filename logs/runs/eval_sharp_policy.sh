@@ -27,5 +27,5 @@ run() {
 }
 run rl_sharp_seed0 --controller policy --checkpoint $SHARP
 run rl_plain_seed0 --controller policy --checkpoint $PLAIN
-run mpc_plain --controller mpc --mpc_state world
+run mpc_plain --controller mpc --mpc_Q 40000 40000 3283 2500 2500 100 --mpc_state world
 echo DONE

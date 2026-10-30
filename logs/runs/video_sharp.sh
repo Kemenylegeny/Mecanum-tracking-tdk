@@ -14,7 +14,7 @@ RAW=logs/videos/raw/sharp
 LOOK="--width 960 --height 600 --cam_elev 60 --marker_scale 0.35 --line_radius 0.008"
 jobs() {
     for who in rl mpc; do
-        if [ $who = rl ]; then ctl="--controller policy --checkpoint $CKPT"; else ctl="--controller mpc --mpc_state world"; fi
+        if [ $who = rl ]; then ctl="--controller policy --checkpoint $CKPT"; else ctl="--controller mpc --mpc_Q 40000 40000 3283 2500 2500 100 --mpc_state world"; fi
         echo "$who far circle $ctl --traj_dir $R/test_shapes --start_offset 0 0.4 0.785398 --max_steps 184 --cam_window 9 --cam_zoom 1.2 --extra_s 0"
         echo "$who rose rose $ctl --traj_dir $R/test_dynamic_slow --cam_zoom ${ROSE_ZOOM:-2.4} --extra_s 0.4"
         echo "$who square sharp_square $ctl --traj_dir $R/test_corners_slow --cam_zoom ${SQUARE_ZOOM:-1.9} --extra_s 0.4"

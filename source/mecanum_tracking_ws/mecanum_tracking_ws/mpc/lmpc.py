@@ -1,6 +1,10 @@
 """Copied from Pvaradi05/Mecanum-Robot-MPC-TDK @ fe01f88, mecanum_lmpc_v2/lmpc.py (only the imports changed), with
-four additions of the RL comparison (docs/OSSZEHANGOLAS.md, 2.2), all off by default, so the defaults reproduce the
-original controller exactly (tests/test_mpc.py):
+four additions of the RL comparison (docs/OSSZEHANGOLAS.md, 2.2), all off by default, and one removal: the hard
+torque-rate limit |u_j - u_j-1| <= du_max of D6 (removed 2026-10-30: the motor has no rate limit in Current Control
+Mode, motor.py; it never bound at an applied step, and without a start error the evaluations are bit-identical without
+it, with the default and the tuned weights alike; with the tuned weights at a 40 cm / 45 deg start error it bound inside
+the horizon, and that start is worse without it: settling 1.35-1.55 s instead of 1.30-1.40 s, max error after it
+4.5-9.0 mm instead of 2.5-3.7). Otherwise the defaults reproduce the original controller (tests/test_mpc.py):
     terminal='dare'   terminal weight P = solution of the DARE at the end of the horizon (A_N-1, B_N-1, Q, R)
                       instead of P_scale * Q; Riccati iteration, warm-started with the previous step's P
     S=(s1..s4)        penalty on the absolute torque change, (D ubar + delta)^T Sbar (D ubar + delta):
@@ -21,7 +25,7 @@ Linear time-varying MPC after Kuehne, Gomes da Silva Jr., Lages (2005), condense
 
 Decisions: D1 constant Q, terminal P = p Q; D2 exact RK4 Jacobians; D3 affine term c_k with
 step-averaged u_r; D4 T = 50 ms, N = 10 (20 until 2026-10-21, when a horizon sweep showed no
-difference in tracking); D5 pure model; D6 hard torque-rate limit, no rate penalty; D8 quadprog.
+difference in tracking); D5 pure model; D6 hard torque-rate limit, no rate penalty (the limit removed 2026-10-30); D8 quadprog.
 D7 (no wheel-speed constraint) is replaced by NMPC plan decision N5: a soft wheel-speed limit in
 both controllers, here linearised along the reference.
 
@@ -34,7 +38,6 @@ Per step:
         [+ 2 D^T Sbar D,  + 2 D^T Sbar delta  with the torque-change penalty S]
     min 1/2 ubar^T H ubar + f^T ubar + slack_lin 1^T s + slack_quad s^T s
         s.t.  u_min - u_r,j <= u~_j <= u_max - u_r,j
-              -du_max <= D ubar + delta <= du_max
               |w(x_r,j) + G_j (e_j + Bbar_j ubar)| <= w_max + s_j,  s >= 0   (j = 1..N, G = dw/dx)
     u(k) = clip(u_r,0 + u~*_0, u_min, u_max)
 """
@@ -71,7 +74,7 @@ def solve_dare(A, B, Q, R, P0=None, max_iter=500, tol=1e-9):
 
 class LinearMPCv2:
     def __init__(self, p: RobotParams, T=0.05, N=10, Q=(40000, 40000, 3283, 2500, 2500, 100),
-                 R=(400, 400, 400, 400), P_scale=5.0, u_max=motor.U_MAX, du_max=motor.DU_MAX,
+                 R=(400, 400, 400, 400), P_scale=5.0, u_max=motor.U_MAX,
                  max_failures=3, omega_max=motor.OMEGA_MAX, wheel_speed_limit=True,
                  slack_lin=SLACK_LIN, slack_quad=SLACK_QUAD, terminal='scaled', S=None,
                  dare_iters=500, dare_tol=1e-9, Q_path=None, state='world'):
@@ -83,7 +86,7 @@ class LinearMPCv2:
         self.state = state
         self.model = dynamics if state == 'world' else wheel_dynamics
         self.terminal, self.dare_iters, self.dare_tol = terminal, dare_iters, dare_tol
-        self.u_max, self.du_max, self.max_failures = u_max, du_max, max_failures
+        self.u_max, self.max_failures = u_max, max_failures
         self.omega_max, self.wheel_speed_limit = omega_max, wheel_speed_limit
         self.slack_lin, self.slack_quad = slack_lin, slack_quad
         q = np.asarray(Q, dtype=float)
@@ -102,7 +105,7 @@ class LinearMPCv2:
         self.Rbar = np.kron(np.eye(N), R)
         self.D = np.eye(NU * N) - np.eye(NU * N, k=-NU)
         I = np.eye(NU * N)
-        self.C = np.hstack([I, -I, self.D.T, -self.D.T])      # quadprog: C^T ubar >= b
+        self.C = np.hstack([I, -I])                           # quadprog: C^T ubar >= b (the torque box)
         # torque-change penalty: Sbar = I_N (x) S, constant Hessian part 2 D^T Sbar D
         self.Sbar = None if S is None or not np.any(S) else np.kron(np.eye(N), np.diag(S).astype(float))
         self.H_S = None if self.Sbar is None else 2.0 * self.D.T @ self.Sbar @ self.D
@@ -180,8 +183,7 @@ class LinearMPCv2:
             H = H + self.H_S
             f = f + 2.0 * self.D.T @ self.Sbar @ delta
         H = (H + H.T) / 2
-        b = np.r_[-self.u_max - ur_bar, ur_bar - self.u_max,
-                  -self.du_max - delta, -self.du_max + delta]
+        b = np.r_[-self.u_max - ur_bar, ur_bar - self.u_max]
         qp_H, qp_a, qp_C, qp_b = H, -f, self.C, b
         nu = NU * N
         if self.wheel_speed_limit:
